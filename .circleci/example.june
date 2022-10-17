@@ -1,0 +1,5 @@
+import std.Sys;
+
+main() {
+    Sys.println("Hello from june!");
+}

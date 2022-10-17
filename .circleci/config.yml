@@ -20,7 +20,13 @@ jobs:
           command: "sudo bash -c \"$(wget -O - https://apt.llvm.org/llvm.sh)\" && sudo apt update && sudo apt install -y gcc cmake make"
       - run:
           name: "Build project"
-          command: "cmake . && make"
+          command: "cmake . && make && sudo chmod +x out/bin/june"
+      - run:
+          name: "output help"
+          command: "./out/bin/june -help"
+      - run:
+          name: "build example binary"
+          command: "./out/bin/june .circleci/example.june"
       - run:
           name: "Run tests"
           command: "sudo chmod +x out/bin/tests && ./out/bin/tests"
