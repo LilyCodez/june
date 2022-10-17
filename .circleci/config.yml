@@ -23,10 +23,10 @@ jobs:
           command: "cmake . && make && sudo chmod +x out/bin/june"
       - run:
           name: "output help"
-          command: "JuneStdLibPath=/usr/include/stdlib ./out/bin/june -help"
+          command: "./out/bin/june -help"
       - run:
           name: "build example binary"
-          command: "./out/bin/june .circleci/example.june"
+          command: "JuneStdLibPath=/usr/include/stdlib ./out/bin/june .circleci/example.june"
       - run:
           name: "Run tests"
           command: "sudo chmod +x out/bin/tests && ./out/bin/tests"
