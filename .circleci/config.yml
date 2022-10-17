@@ -16,7 +16,7 @@ jobs:
       - checkout
       - run:
           name: "Install dependencies"
-          command: "sudo apt install -y llvm-14 gcc cmake make"
+          command: "sudo apt update && sudo apt install -y llvm-14 gcc cmake make"
       - run:
           name: "Build project"
           command: "cmake . && make"
