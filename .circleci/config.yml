@@ -17,7 +17,10 @@ jobs:
       - checkout
       - run:
           name: "Install dependencies"
-          command: "sudo bash -c \"$(wget -O - https://apt.llvm.org/llvm.sh)\" && sudo apt update && sudo apt install -y gcc cmake make"
+          command: "wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 14"
+      - run:
+          name: "Install dependencies"
+          command: "sudo apt update && sudo apt install -y gcc cmake make"
       - run:
           name: "Build project"
           command: "cmake . && make && sudo chmod +x out/bin/june"
