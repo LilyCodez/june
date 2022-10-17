@@ -21,7 +21,7 @@ jobs:
           name: "Build project"
           command: "cmake . && make"
       - store_artifacts:
-          path: ../out/bin
+          path: out/bin
 
 # Invoke jobs via workflows
 # See: https://circleci.com/docs/2.0/configuration-reference/#workflows
