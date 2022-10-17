@@ -16,9 +16,6 @@ jobs:
     steps:
       - checkout
       - run:
-          name: "Find stdlib"
-          command: "sudo find / -type d -name \"stdlib\""
-      - run:
           name: "Install dependencies"
           command: "sudo bash -c \"$(wget -O - https://apt.llvm.org/llvm.sh)\" && sudo apt update && sudo apt install -y gcc cmake make"
       - run:
