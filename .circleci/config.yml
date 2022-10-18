@@ -16,19 +16,16 @@ jobs:
     steps:
       - checkout
       - run:
-          name: "Install dependencies"
+          name: "Install LLVM 14"
           command: "wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 14"
       - run:
-          name: "Install dependencies"
+          name: "Install gcc cmake make clang"
           command: "sudo apt update && sudo apt install -y gcc cmake make clang"
       - run:
-          name: "Build project"
+          name: "Build driver"
           command: "cmake . && make && sudo chmod +x out/bin/june"
       - run:
-          name: "output help"
-          command: "./out/bin/june -help"
-      - run:
-          name: "build example binary"
+          name: "Build example binary using june driver"
           command: "JuneStdLibPath=/home/circleci/project/stdlib ./out/bin/june -verbose .circleci/example.june"
       - run:
           name: "Run example binary"
