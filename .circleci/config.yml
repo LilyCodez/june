@@ -36,6 +36,9 @@ jobs:
       - run:
           name: "Run tests"
           command: "sudo chmod +x out/bin/tests && ./out/bin/tests"
+      - run:
+          name: "Run tests"
+          command: "sudo chmod +x program && ./program"
       - store_artifacts:
           path: out
 
