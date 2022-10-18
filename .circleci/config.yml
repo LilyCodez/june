@@ -23,7 +23,7 @@ jobs:
           command: "sudo apt update && sudo apt install -y gcc cmake make clang zip unzip"
       - run:
           name: "Build driver"
-          command: "cmake . && make && sudo chmod +x out/bin/june"
+          command: "cmake . && make"
       - run:
           name: "Zip compiled code for artifacts"
           command: "zip -r out.zip out"
@@ -32,10 +32,10 @@ jobs:
           command: "JuneStdLibPath=/home/circleci/project/stdlib ./out/bin/june -verbose .circleci/example.june"
       - run:
           name: "Run example binary"
-          command: "sudo chmod +x program && ./program"
+          command: "./program"
       - run:
           name: "Run tests"
-          command: "sudo chmod +x out/bin/tests && ./out/bin/tests"
+          command: "./out/bin/tests"
       - store_artifacts:
           path: out.zip
 
