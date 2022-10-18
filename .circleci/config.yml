@@ -29,7 +29,7 @@ jobs:
           command: "zip -r out.zip out"
       - run:
           name: "Build example binary using june driver"
-          command: "JuneStdLibPath=/home/circleci/project/stdlib ./out/bin/june -verbose .circleci/example.june"
+          command: "JuneStdLibPath=/home/circleci/project/stdlib ./out/bin/june .circleci/example.june"
       - run:
           name: "Run example binary"
           command: "./program"
