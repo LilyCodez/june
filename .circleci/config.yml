@@ -25,7 +25,7 @@ jobs:
           name: "Build driver"
           command: "cmake . && make && sudo chmod +x out/bin/june"
       - run:
-          name: "Run tests"
+          name: "Zip compiled code for artifacts"
           command: "zip -r out.zip out"
       - run:
           name: "Build example binary using june driver"
