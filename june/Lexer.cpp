@@ -428,6 +428,15 @@ void june::Lexer::HandlePredirectiveStart() {
 			EncounteredIfPreprocessorStack.pop();
 		}
 		FinishPredirective();
+	} else if (DirectiveType == "elif") {
+		if (EncounteredIfPreprocessorStack.empty()) {
+			Error(DirectiveType.begin(), "Unexpected #elif");
+			EatTillEndOfLine();
+		} else {
+			ParsePredirectiveCond();
+			FinishPredirective();
+			SkipFalsePredirectiveIf(0);
+		}
 	} else {
 		Error(DirectiveType.begin(), "Unknown preprocessor directive type");
 		EatTillEndOfLine();
@@ -451,7 +460,8 @@ llvm::StringRef june::Lexer::GetPredirective() {
 
 void june::Lexer::HandlePredirectiveIf() {
 	EncounteredIfPreprocessorStack.push(LineNumber);
-	
+	u32 StartStackSize = EncounteredIfPreprocessorStack.size();
+
 	bool Cond = ParsePredirectiveCond();
 	FinishPredirective();
 	
@@ -459,31 +469,7 @@ void june::Lexer::HandlePredirectiveIf() {
 		// continue parsing as normal.
 		return;
 	} else {
-		// Skip tokens until end of pre-directive if.
-		while (true) {
-			if (*CurPtr == '#') {
-				llvm::StringRef DirectiveType = GetPredirective();
-				
-				if (DirectiveType == "endif") {
-					EncounteredIfPreprocessorStack.pop();
-					EatLine();
-					return; // Continue parsing as normal!
-				} else if (DirectiveType == "if") {
-					EncounteredIfPreprocessorStack.push(LineNumber);
-					EatLine();
-					continue;
-				} else {
-					EatLine();	
-					continue;
-				}
-			} else if (*CurPtr == 0) {
-				Error(CurPtr, "Unexpected end of file. Expected #endif preprocessor directive");
-				return;
-			} else {
-				// Line did not start with preprocessor so just continue till next line
-				EatLine();
-			}
-		}
+		SkipFalsePredirectiveIf(StartStackSize);
 	}
 }
 
@@ -516,6 +502,50 @@ bool june::Lexer::ParsePredirectiveCond() {
 		Log.Error(Tok.Loc, "Unexpected token for preprocessor expression");
 		EatLine();
 		return false;
+	}
+}
+
+void june::Lexer::SkipFalsePredirectiveIf(u32 StartStackSize) {
+	// Skip tokens until end of pre-directive if.
+	while (true) {
+		if (*CurPtr == '#') {
+			llvm::StringRef DirectiveType = GetPredirective();
+				
+			if (DirectiveType == "endif") {
+				EncounteredIfPreprocessorStack.pop();
+				EatLine();
+				return; // Continue parsing as normal!
+			} else if (DirectiveType == "elif") {
+				// Checking if it is our elif
+				if (StartStackSize != 0 && StartStackSize == EncounteredIfPreprocessorStack.size()) {
+
+					bool ElifCond = ParsePredirectiveCond();
+					FinishPredirective();
+
+					if (ElifCond) {
+						// continue parsing as normal.
+						return;
+					} // else was false so continue skipping
+				} else {
+					// Not our elif
+					EatLine();
+					continue;
+				}
+			} else if (DirectiveType == "if") {
+				EncounteredIfPreprocessorStack.push(LineNumber);
+				EatLine();
+				continue;
+			} else {
+				EatLine();	
+				continue;
+			}
+		} else if (*CurPtr == 0) {
+			Error(CurPtr, "Unexpected end of file. Expected #endif preprocessor directive");
+			return;
+		} else {
+			// Line did not start with preprocessor so just continue till next line
+			EatLine();
+		}
 	}
 }
 

@@ -1,13 +1,9 @@
-#if OS_WINDOWS
-a := 12354;
-#endif  // This should be fine!
-
-#if false
-#if OS_WINDOWS
-a := 3145;
-#endif // -- OS_WINDOWS
-#endif // End of true!
+#if OS_UNIX
+a := 154;
+#elif OS_WINDOWS
+a := 522;
+#endif
 
 main() {
-	a  = 22;
+	
 }

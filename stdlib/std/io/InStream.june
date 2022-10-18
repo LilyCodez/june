@@ -9,8 +9,7 @@ InStream :: record {
 
 #if OS_WINDOWS	
 	handle :void*;
-#endif
-#if OS_UNIX
+#elif OS_UNIX
 	handle :i32;
 #endif
 
@@ -18,8 +17,7 @@ InStream :: record {
 	InStream(handle :void*) {
 		this.handle = handle;
 	}
-#endif
-#if OS_UNIX
+#elif OS_UNIX
 	InStream(handle :i32) {
 		this.handle = handle;
 	}
@@ -69,14 +67,15 @@ InStream :: record {
 		}
 #endif
 
+	// TODO: Unix!
+
 	}
 
 	read(buffer :c8*, len :u32) -> u32 {
 		numberOfBytersRead :u32;
 #if OS_WINDOWS
 		Win32.ReadFile(handle, buffer, len, &numberOfBytersRead, null);
-#endif
-#if OS_UNIX
+#elif OS_UNIX
 		numberOfBytersRead = cast(u32) Unix.read(handle, buffer, len);
 #endif
 		return numberOfBytersRead;
@@ -88,8 +87,7 @@ InStream :: record {
 		amountRead :i32 = read(buffer, buffer.length);
 		// -2 because \r\n
 		return String(buffer, amountRead - 2);
-#endif
-#if OS_UNIX
+#elif OS_UNIX
 		// Reading character by character until a new line character
 		// is found.
 		amountRead :i32;
@@ -112,8 +110,7 @@ InStream :: record {
 	close() {
 #if OS_WINDOWS
 		Win32.CloseHandle(handle);
-#endif
-#if OS_UNIX
+#elif OS_UNIX
 		Unix.close(handle);
 #endif
 	}

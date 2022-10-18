@@ -51,7 +51,7 @@ void RunTest(const c8* TestDirectoryPath, int TestErrorCode) {
 	//Compiler.EmitDebugInfo = true;
 	//Compiler.Verbose = true;
 	//Compiler.DisplayLLVMIR = true;
-	//Compiler.DisplayAST = true;
+	Compiler.DisplayAST = true;
 	Compiler.Compile(SourceDirectories);
 
 	if (!Compiler.FoundCompileError) {
@@ -173,7 +173,7 @@ int main() {
 	RunTest(SRC("varfunccall/VarFuncCall4.june"), 1241 + 778);
 	RunTest(SRC("generics/Generics1.june"), 16 + 6);
 	RunTest(SRC("generics/Generics2.june"), 558);
-	RunTest(SRC("playground"), 0);
+	//RunTest(SRC("playground"), 0);
 
 	if (Succeeded + Failed > 0) {
 		llvm::outs() << "Passed/Tested (" << Succeeded << "/" << (Succeeded + Failed) << ")\n";

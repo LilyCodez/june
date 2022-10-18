@@ -64,6 +64,7 @@ namespace june {
 		void HandlePredirectiveIf();
 		bool ParsePredirectiveCond();
 		void FinishPredirective();
+		void SkipFalsePredirectiveIf(u32 StartStackSize);
 
 		inline Token CreateTokenAndEat(u16 Kind, const c8* TokStart) {
 			++CurPtr;
