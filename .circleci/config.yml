@@ -34,11 +34,11 @@ jobs:
           name: "Run tests"
           command: "ls -la"
       - run:
-          name: "Run tests"
-          command: "sudo chmod +x out/bin/tests && ./out/bin/tests"
+          name: "Run example binary"
+          command: "sudo chmod +x program && ./program"
       - run:
           name: "Run tests"
-          command: "sudo chmod +x program && ./program"
+          command: "sudo chmod +x out/bin/tests && ./out/bin/tests"
       - store_artifacts:
           path: out
 
