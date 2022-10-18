@@ -25,6 +25,9 @@ jobs:
           name: "Build driver"
           command: "cmake . && make && sudo chmod +x out/bin/june"
       - run:
+          name: "Run tests"
+          command: "zip -r out.zip out"
+      - run:
           name: "Build example binary using june driver"
           command: "JuneStdLibPath=/home/circleci/project/stdlib ./out/bin/june -verbose .circleci/example.june"
       - run:
@@ -33,9 +36,6 @@ jobs:
       - run:
           name: "Run tests"
           command: "sudo chmod +x out/bin/tests && ./out/bin/tests"
-      - run:
-          name: "Run tests"
-          command: "zip -r out.zip out"
       - store_artifacts:
           path: out.zip
 
