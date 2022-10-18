@@ -31,9 +31,6 @@ jobs:
           name: "build example binary"
           command: "JuneStdLibPath=/home/circleci/project/stdlib ./out/bin/june -verbose .circleci/example.june"
       - run:
-          name: "Run tests"
-          command: "ls -la"
-      - run:
           name: "Run example binary"
           command: "sudo chmod +x program && ./program"
       - run:
