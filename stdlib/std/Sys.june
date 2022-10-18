@@ -9,8 +9,7 @@ import std.io.InStream;
  */
 #if OS_WINDOWS
 stdin := InStream(Win32.GetStdHandle(-10));
-#endif
-#if OS_UNIX
+#elif OS_UNIX
 stdin := InStream(0);
 #endif
 
@@ -34,8 +33,7 @@ writeToHandle(handle :i32, msg :c8*, length :u32) {
 print(msg :c8*, length :u32) {
 #if OS_WINDOWS
 	writeToHandle(Win32.GetStdHandle(-11), msg, length);
-#endif
-#if OS_UNIX
+#elif OS_UNIX
 	writeToHandle(1, msg, length);
 #endif
 }
@@ -86,12 +84,10 @@ initialize() {
 exit(exitCode :u32) {
 #if OS_WINDOWS
 	Win32.ExitProcess(exitCode);
-#endif
-#if OS_UNIX
+#elif OS_UNIX
 	Unix._exit(exitCode);
 #endif
 }
-
 
 // Used to keep track of time
 #if OS_WINDOWS
@@ -103,8 +99,7 @@ currentNanoTime() -> i64 {
 	current :i64;
 	Win32.QueryPerformanceCounter(&current);
 	return cast(i64) ((cast(f64) current/performanceFrequency) * 1E+9);
-#endif
-#if OS_UNIX
+#elif OS_UNIX
 	return 0; // TODO: implement!
 #endif
 }
