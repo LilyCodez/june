@@ -1,5 +1,4 @@
 import std.Sys;
-import std.lang.String;
 
 main() {
 	Sys.println(String.concat(String("Omg it works! "), String(":D")));
