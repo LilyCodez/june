@@ -1,6 +1,5 @@
 // brainfuck
 
-//import std.lang.String;
 import Tests;
 
 p: i32;
@@ -25,7 +24,6 @@ scan(dir: i32) {
 }
 
 main() {
-	//r: String = String("");
 	loop true {
         char: c8 = prog[pc];
         if (char == '>') {
@@ -42,7 +40,6 @@ main() {
         }
         if (char == '.') {
             Tests.print(a[p]);
-            //r = String.concat(r, String(&a[p], 1));
         }
         if (char == '[') {
 			if (a[p] == 0) {
