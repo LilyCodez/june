@@ -1,0 +1,62 @@
+// brainfuck
+
+//import std.lang.String;
+import Tests;
+
+p: i32;
+pc: i32;
+a: c8* = new c8[30000];
+
+prog: c8* = "++++++++++[>+++++++>++++++++++>+++>+<<<<-]>++.>+.+++++++..+++.>++.<<+++++++++++++++.>.+++.------.--------.>+.>.!";
+
+scan(dir: i32) {
+    // TODO: Make this a "normal" for loop when pc += dir; is supported in the increment zone
+    nest: i32 = dir;
+	loop dir*nest > 0 {
+        char: c8 = prog[pc+dir];
+        if (char == ']'){
+            nest--;
+        }
+        if (char == '[') {
+            nest++;
+        }
+        pc += dir;
+	}
+}
+
+main() {
+	//r: String = String("");
+	loop true {
+        char: c8 = prog[pc];
+        if (char == '>') {
+			p++;
+        }
+        if (char == '<') {
+			p--;
+        }
+        if (char == '+') {
+			a[p]++;
+        }
+        if (char == '-') {
+			a[p]--;
+        }
+        if (char == '.') {
+            Tests.print(a[p]);
+            //r = String.concat(r, String(&a[p], 1));
+        }
+        if (char == '[') {
+			if (a[p] == 0) {
+				scan(1);
+			}
+        }
+        if (char == ']') {
+			if (a[p] != 0) {
+				scan(-1);
+			}
+        }
+        if (char == '!') {
+			return;
+        }
+		pc++;
+	}
+}
