@@ -98,9 +98,8 @@ void RunPlayground() {
 }
 
 int main() {
-
 	//RunPlayground();
-
+	RunTest(SRC("brainfuck/Interpreter1.june"), "Hello World!\n");
 	RunTest(SRC("exprs/Exprs1.june"), 214 + 41 / 2 - 663 * 3);
 	RunTest(SRC("exprs/Exprs2.june"), []() {
 		s32 b = 22;
