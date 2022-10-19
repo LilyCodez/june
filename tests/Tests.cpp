@@ -160,7 +160,7 @@ int main() {
 	RunTest(SRC("tuples/Tuples1.june"), "343 11");
 	RunTest(SRC("tuples/Tuples2.june"), "1 2 3 4");
 	RunTest(SRC("tuples/Tuples3.june"), "14 888 99 3");
-	RunTest(SRC("tuples/Tuples4.june"), "66 11 42");
+	RunTest(SRC("tuples/Tuples4.june"), "66 11 43");
 	
 	if (Succeeded + Failed > 0) {
 		llvm::outs() << "Passed/Tested (" << Succeeded << "/" << (Succeeded + Failed) << ")\n";
