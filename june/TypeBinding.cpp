@@ -58,6 +58,13 @@ u32 june::GetBindingsId(GenericFuncDecl* GenFunc, TypeBindList& Bindings) {
 }
 
 namespace june {
+
+	void ResetExpr(Expr* E) {
+		E->CastTy = nullptr;
+		E->IsFoldable = true;
+		E->IsComptimeCompat = true;
+	}
+
 	void ResetNode(AstNode* Node) {
 		switch (Node->Kind) {
 		case AstKind::IDENT_REF:
@@ -66,7 +73,7 @@ namespace june {
 		case AstKind::BOOL_LITERAL:
 		case AstKind::SIZEOF_TYPE:
 		case AstKind::THIS_REF: {
-			ocast<Expr*>(Node)->CastTy = nullptr;
+			ResetExpr(ocast<Expr*>(Node));
 			break;
 		}
 		case AstKind::FUNC_DECL:
@@ -79,6 +86,7 @@ namespace june {
 		}
 		case AstKind::VAR_DECL: {
 			VarDecl* Var = ocast<VarDecl*>(Node);
+			Var->LLComptimeVal = nullptr;
 			if (Var->Assignment) {
 				ResetNode(Var->Assignment);
 			}
@@ -143,7 +151,7 @@ namespace june {
 		case AstKind::FIELD_ACCESSOR: {
 			FieldAccessor* FA = ocast<FieldAccessor*>(Node);
 			FA->IsArrayLength = false;
-			FA->CastTy = nullptr;
+			ResetExpr(FA);
 			ResetNode(FA->Site);
 			break;
 		}
@@ -154,20 +162,20 @@ namespace june {
 			}
 			Call->CalledFunc = nullptr;
 			Call->IsConstructorCall = false;
-			Call->CastTy = nullptr;
+			ResetExpr(Call);
 			break;
 		}
 		case AstKind::BINARY_OP: {
 			BinaryOp* BinOp = ocast<BinaryOp*>(Node);
 			ResetNode(BinOp->LHS);
 			ResetNode(BinOp->RHS);
-			BinOp->CastTy = nullptr;
+			ResetExpr(BinOp);
 			break;
 		}
 		case AstKind::UNARY_OP: {
 			UnaryOp* UOP = ocast<UnaryOp*>(Node);
 			ResetNode(UOP->Val);
-			UOP->CastTy = nullptr;
+			ResetExpr(UOP);
 			break;
 		}
 		case AstKind::ARRAY: {
@@ -175,24 +183,24 @@ namespace june {
 			for (u32 i = 0; i < Arr->NumElements; i++) {
 				ResetNode(Arr->GetElement(i));
 			}
-			Arr->CastTy = nullptr;
+			ResetExpr(Arr);
 			break;
 		}
 		case AstKind::ARRAY_ACCESS: {
 			ArrayAccess* AA = ocast<ArrayAccess*>(Node);
 			ResetNode(AA->Site);
-			AA->CastTy = nullptr;
+			ResetExpr(AA);
 			break;
 		}
 		case AstKind::TYPE_CAST: {
 			TypeCast* Cast = ocast<TypeCast*>(Node);
 			ResetNode(Cast->Val);
-			Cast->CastTy = nullptr;
+			ResetExpr(Cast);
 			break;
 		}
 		case AstKind::HEAP_ALLOC_TYPE: {
 			HeapAllocType* HeapAlloc = ocast<HeapAllocType*>(Node);
-			HeapAlloc->CastTy = nullptr;
+			ResetExpr(HeapAlloc);
 			break;
 		}
 		case AstKind::TERNARY_COND: {
@@ -200,7 +208,7 @@ namespace june {
 			ResetNode(Cond->Cond);
 			ResetNode(Cond->Val1);
 			ResetNode(Cond->Val2);
-			Cond->CastTy = nullptr;
+			ResetExpr(Cond);
 			break;
 		}
 		case AstKind::TUPLE: {
@@ -208,7 +216,7 @@ namespace june {
 			for (Expr* Val : Tup->Values) {
 				ResetNode(Val);
 			}
-			Tup->CastTy = nullptr;
+			ResetExpr(Tup);
 			break;
 		}
 		default:

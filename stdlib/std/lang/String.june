@@ -77,7 +77,7 @@ String :: record {
 		i := 0;
 
 		// Maybe it has a leading + or -
-		firstCh :c8 = buffer[0];
+		firstCh: c8 = buffer[0];
 		if firstCh < '0' {
 			if firstCh == '-' {
 				isNeg = true;

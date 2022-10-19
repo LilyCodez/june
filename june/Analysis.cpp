@@ -179,7 +179,31 @@ YIELD_ERROR(Var)
 				Var->Assignment->Ty->ToStr(), Var->Ty->ToStr()));
 		}
 
+		if (Var->Mods & mods::Mods::COMPTIME) {
+			if (!Var->Assignment->IsComptimeCompat) {
+				VAR_YIELD(Error(Var,
+					"Variable marked 'comptime' but assignment was not able to be evaluted at compilation time"));
+			}
+			
+			if (Var->Ty->GetKind() == TypeKind::FIXED_ARRAY) {
+				VAR_YIELD(Error(Var,
+					"Variable marked 'comptime' do not support arrays currently"));
+			}
+
+			if (Var->Ty->GetKind() == TypeKind::RECORD) {
+				VAR_YIELD(Error(Var,
+					"Variable marked 'comptime' do not support records currently"));
+			}
+
+			if (Var->Ty->GetKind() == TypeKind::TUPLE) {
+				VAR_YIELD(Error(Var,
+					"Variable marked 'comptime' do not support tuples currently"));
+			}
+		}
+
 		CreateCast(Var->Assignment, Var->Ty);
+	} else if (Var->Mods & mods::Mods::COMPTIME) {
+		VAR_YIELD(Error(Var, "Variables marked 'comptime' should be initialized"));
 	}
 
 	if (Var->Ty->GetKind() == TypeKind::RECORD) {
@@ -674,12 +698,25 @@ void june::Analysis::CheckIdentRefCommon(IdentRef* IRef, bool GivePrefToFuncs, F
 
 		EnsureChecked(IRef->Loc, Var);
 
+		if (!(Var->Mods & mods::Mods::COMPTIME)) {
+			IRef->IsComptimeCompat = false;
+		} else {
+			IRef->IsFoldable = true;
+		}
+
 		IRef->Ty = Var->Ty;
 		break;
 	}
-	case IdentRef::FUNCS:
-		IRef->Ty = (*IRef->FuncsRef)[0]->RetTy;
+	case IdentRef::FUNCS: {
+		FuncDecl* Func = (*IRef->FuncsRef)[0];
+		IRef->Ty = Func->RetTy;
+
+		if (!(Func->Mods & mods::Mods::COMPTIME)) {
+			IRef->IsComptimeCompat = false;
+		}
+
 		break;
+	}
 	case IdentRef::FILE_UNIT:
 		IRef->Ty = Context.UndefinedType;
 		break;
@@ -767,6 +804,7 @@ void june::Analysis::CheckFieldAccessor(FieldAccessor* FA, bool GivePrefToFuncs)
 void june::Analysis::CheckFuncCall(FuncCall* Call) {
 	
 	Call->IsFoldable = false;
+	Call->IsComptimeCompat = false; // TODO: Allow for comptime functions
 
 	// Checking arguments
 	for (Expr* Arg : Call->Args) {
@@ -1352,6 +1390,10 @@ void june::Analysis::CheckBinaryOp(BinaryOp* BinOp) {
 		BinOp->IsFoldable = false;
 	}
 
+	if (!BinOp->LHS->IsComptimeCompat || !BinOp->RHS->IsComptimeCompat) {
+		BinOp->IsComptimeCompat = false;
+	}
+
 #define OPERATOR_CANNOT_APPLY(T)                              \
 Error(BinOp,                                                  \
 	"Operator '%s' cannot apply to type '%s'",                \
@@ -1366,16 +1408,33 @@ YIELD_ERROR(BinOp)
 	case TokenKind::LT_LT_EQ: case TokenKind::GT_GT_EQ: {
 
 		if (!IsLValue(BinOp->LHS)) {
-			// TODO: Report error.
+			Error(BinOp->LHS, "Expected to be a modifiable variable");
+			YIELD_ERROR(BinOp);
 		}
 
+		if (BinOp->IsComptimeCompat) {
+			Error(BinOp->LHS, "Cannot modify a variable marked with comptime");
+			YIELD_ERROR(BinOp);
+		}
+
+		bool UsesPointerArithmetic = false;
 		switch (BinOp->Op) {
 		case TokenKind::PLUS_EQ: case TokenKind::MINUS_EQ: {
-			if (!RTy->isNumber()) {
-				OPERATOR_CANNOT_APPLY(RTy);
-			}
-			if (!LTy->isNumber()) {
-				OPERATOR_CANNOT_APPLY(LTy);
+			if (LTy->GetKind() == TypeKind::POINTER) {
+				// Pointer arithmetic case
+				if (!RTy->isInt()) {
+					Error(BinOp->RHS, "Pointer arithmetic expects integers");
+					YIELD_ERROR(BinOp);
+				}
+
+				UsesPointerArithmetic = true;
+			} else {
+				if (!RTy->isNumber()) {
+					OPERATOR_CANNOT_APPLY(RTy);
+				}
+				if (!LTy->isNumber()) {
+					OPERATOR_CANNOT_APPLY(LTy);
+				}
 			}
 			break;
 		}
@@ -1416,33 +1475,70 @@ YIELD_ERROR(BinOp)
 			break;
 		}
 
-		CreateCast(BinOp->RHS, LTy);
+		if (!UsesPointerArithmetic) {
+			if (!IsAssignableTo(LTy, BinOp->RHS)) {
+				Error(BinOp, "Cannot assign value of type '%s' to variable of type '%s'",
+					RTy->ToStr(), LTy->ToStr());
+				YIELD_ERROR(BinOp);
+			}
+
+			CreateCast(BinOp->RHS, LTy);
+		}
 
 		BinOp->Ty = LTy;
 		break;
 	}
 	case '+': case '-': {
-		if (!(LTy->isNumber())) {
+		// Pointers are included so that pointer arithmetic
+		// can be done.
+		if (!(LTy->isNumber() || LTy->GetKind() == TypeKind::POINTER)) {
 			OPERATOR_CANNOT_APPLY(LTy);
 		}
-		if (!(RTy->isNumber())) {
+		if (!(RTy->isNumber() || RTy->GetKind() == TypeKind::POINTER)) {
 			OPERATOR_CANNOT_APPLY(RTy);
 		}
 
-		Type* ToType;
-		if (LTy->isInt() && RTy->isInt()) {
-			u32 LargerMemSize = max(LTy->MemSize(), RTy->MemSize());
-			bool IsSigned = LTy->isSigned() || RTy->isSigned();
-			ToType = Type::GetIntTypeBasedOnSize(LargerMemSize, IsSigned, Context);
+		if (LTy->GetKind() == TypeKind::POINTER || RTy->GetKind() == TypeKind::POINTER) {
+			// Pointer arithmetic
+
+			if (BinOp->Op == '-' && LTy->isNumber()) {
+				Error(BinOp->LHS, "Cannot subtract a pointer from a number");
+				YIELD_ERROR(BinOp);
+			}
+
+			if (LTy->GetKind() == TypeKind::POINTER) {
+				if (!RTy->isInt()) {
+					Error(BinOp->RHS, "Pointer arithmetic expects integers");
+					YIELD_ERROR(BinOp);
+				}
+				
+				BinOp->Ty = LTy;
+			} else {
+				if (!LTy->isInt()) {
+					Error(BinOp->LHS, "Pointer arithmetic expects integers");
+					YIELD_ERROR(BinOp);
+				}
+				
+				BinOp->Ty = RTy;
+			}
 		} else {
-			// At least one is a float
-			u32 LargerMemSize = max(LTy->MemSize(), RTy->MemSize());
-			ToType = Type::GetFloatTypeBasedOnSize(LargerMemSize, Context);
-		}
+			// Not pointer arithmetic
+
+			Type* ToType;
+			if (LTy->isInt() && RTy->isInt()) {
+				u32 LargerMemSize = max(LTy->MemSize(), RTy->MemSize());
+				bool IsSigned = LTy->isSigned() || RTy->isSigned();
+				ToType = Type::GetIntTypeBasedOnSize(LargerMemSize, IsSigned, Context);
+			} else {
+				// At least one is a float
+				u32 LargerMemSize = max(LTy->MemSize(), RTy->MemSize());
+				ToType = Type::GetFloatTypeBasedOnSize(LargerMemSize, Context);
+			}
 		
-		CreateCast(BinOp->LHS, ToType);
-		CreateCast(BinOp->RHS, ToType);
-		BinOp->Ty = ToType;
+			CreateCast(BinOp->LHS, ToType);
+			CreateCast(BinOp->RHS, ToType);
+			BinOp->Ty = ToType;
+		}
 		break;
 	}
 	case '*': case '/': {
@@ -1593,6 +1689,7 @@ Error(UOP,                                                   \
 YIELD_ERROR(UOP)
 
 	UOP->IsFoldable = UOP->Val->IsFoldable;
+	UOP->IsComptimeCompat = UOP->Val->IsComptimeCompat;
 
 	Type* VT = UOP->Val->Ty;
 	switch (UOP->Op) {
@@ -1604,6 +1701,12 @@ YIELD_ERROR(UOP)
 
 		if (!IsLValue(UOP->Val)) {
 			Error(UOP, "Operator '%s' requires the value to be a variable",
+				GetTokenKindPresentation(UOP->Op, Context));
+			YIELD_ERROR(UOP);
+		}
+
+		if (UOP->Val->IsComptimeCompat) {
+			Error(UOP, "Operator '%' requries the value to be modifiable",
 				GetTokenKindPresentation(UOP->Op, Context));
 			YIELD_ERROR(UOP);
 		}
@@ -1644,6 +1747,11 @@ YIELD_ERROR(UOP)
 				Context.RequestGen(Func);
 				break;
 			}
+		}
+
+		if (UOP->Val->IsComptimeCompat) {
+			Error(UOP, "Cannot take the address of a comptime variable");
+			YIELD_ERROR(UOP);
 		}
 
 		UOP->Ty = PointerType::Create(VT, Context);
@@ -1699,6 +1807,9 @@ void june::Analysis::CheckArray(Array* Arr) {
 		if (!Elm->IsFoldable) {
 			Arr->IsFoldable = false;
 		}
+		if (!Elm->IsComptimeCompat) {
+			Arr->IsComptimeCompat = false;
+		}
 
 		if (!ElmTypes) {
 			ElmTypes = Elm->Ty;
@@ -1721,6 +1832,8 @@ void june::Analysis::CheckArrayAccess(ArrayAccess* AA) {
 
 	CheckNode(AA->Site);
 	YIELD_ERROR_WHEN_M(AA, AA->Site);
+
+	AA->IsComptimeCompat = AA->Site->IsComptimeCompat;
 
 	TypeKind K = AA->Site->Ty->GetKind();
 	if (K == TypeKind::TUPLE) {
@@ -1762,11 +1875,16 @@ void june::Analysis::CheckTypeCast(TypeCast* Cast) {
 		YIELD_ERROR(Cast);
 	}
 
+	// TODO: What if the casting requires non-foldability?
+	Cast->IsComptimeCompat = Cast->Val->IsComptimeCompat;
+	Cast->IsFoldable = Cast->Val->IsFoldable;
 	Cast->Ty = Cast->ToTy;
 }
 
 void june::Analysis::CheckHeapAllocType(HeapAllocType* HeapAlloc) {
 	HeapAlloc->IsFoldable = false;
+	HeapAlloc->IsComptimeCompat = false;
+
 	if (HeapAlloc->TypeToAlloc->GetKind() == TypeKind::FIXED_ARRAY) {
 		HeapAlloc->Ty = PointerType::Create(
 			HeapAlloc->TypeToAlloc->AsFixedArrayType()->GetBaseType(), Context);
@@ -1790,6 +1908,7 @@ void june::Analysis::CheckThisRef(ThisRef* This) {
 		Error(This, "Cannot use 'this' in global scope");
 		YIELD_ERROR(This);
 	}
+	This->IsFoldable = false;
 	// Just take the type as absolute.
 	This->Ty = PointerType::Create(GetRecordType(CRecord), Context);
 }
@@ -1814,6 +1933,12 @@ void june::Analysis::CheckTernaryCond(TernaryCond* Ternary) {
 	}
 	CreateCast(Ternary->Val2, Ternary->Val1->Ty);
 
+	if (!Ternary->Val1->IsFoldable || !Ternary->Val1->IsFoldable) {
+		Ternary->IsComptimeCompat = false;
+	}
+	if (!Ternary->Val1->IsComptimeCompat || !Ternary->Val1->IsComptimeCompat) {
+		Ternary->IsComptimeCompat = false;
+	}
 	Ternary->Ty = Ternary->Val1->Ty;
 }
 
@@ -1825,6 +1950,9 @@ void june::Analysis::CheckTuple(Tuple* Tup) {
 	bool EncounteredValError = false;
 	for (Expr* Val : Tup->Values) {
 		CheckNode(Val);
+		if (!Val->IsComptimeCompat) {
+			Tup->IsComptimeCompat = false;
+		}
 		if (Val->Ty->is(Context.ErrorType)) {
 			EncounteredValError = true;
 		}

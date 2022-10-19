@@ -30,11 +30,13 @@ void june::ComptimeGen::ComputeArrayDimSize(ComptimeValue& CV) {
 		return;
 	}
 
-	// TODO: Need to make sure that the value of the array is compile time
-	//       compatible.
+	if (!AT->LengthAsExpr->IsComptimeCompat) {
+		CV.Log.Error(AT->LengthAsExpr->Loc,
+			"Array's declared length must be able to be computed at compilation time");
+		return;
+	}
 
 	// TODO: Wrong LLModule. Need to pass it a module pertaining to comptime values
-	// TODO: Print message
 	IRGen Gen(Context, false, false);
 	llvm::Constant* LLLength = llvm::cast<llvm::Constant>(Gen.GenNode(AT->LengthAsExpr));
 

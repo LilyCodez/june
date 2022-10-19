@@ -1,0 +1,16 @@
+import Tests;
+
+main() {
+	str :c8* = "Hello world!";
+
+	Tests.print(str + 2);
+	str = str + 4;
+	Tests.print(" ");
+	Tests.print(str);
+	str -= 2;
+	Tests.print(" ");
+	Tests.print(str);
+	str += 6;
+	Tests.print(" ");
+	Tests.print(str);
+}

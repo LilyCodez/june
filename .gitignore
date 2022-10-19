@@ -6,3 +6,4 @@
 out
 CMakeSettings.json
 .vs
+tests/resources/playground/

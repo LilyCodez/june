@@ -59,6 +59,7 @@ namespace june {
 			KW_FALSE,
 			KW_IMPORT,
 			KW_NULL,
+			KW_COMPTIME,
 			KW_NATIVE,
 
 

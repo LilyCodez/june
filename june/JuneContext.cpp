@@ -163,6 +163,7 @@ void june::JuneContext::Init(bool EmitDebugInfo) {
 	TokenKeywordMap.insert({ "false"   , TokenKind::KW_FALSE     });
 	TokenKeywordMap.insert({ "record"  , TokenKind::KW_RECORD    });
 	TokenKeywordMap.insert({ "null"    , TokenKind::KW_NULL      });
+	TokenKeywordMap.insert({ "comptime", TokenKind::KW_COMPTIME  });
 	TokenKeywordMap.insert({ "native"  , TokenKind::KW_NATIVE    });
 	TokenKeywordMap.insert({ "return"  , TokenKind::KW_RETURN    });
 	TokenKeywordMap.insert({ "loop"    , TokenKind::KW_LOOP      });

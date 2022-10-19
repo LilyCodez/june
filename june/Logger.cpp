@@ -27,8 +27,17 @@ void june::Logger::Error(SourceLoc Loc, const std::function<void()>& Printer) {
 	// Forward error message
 
 	std::string LineNumber = std::to_string(Loc.LineNumber);
+	u32 ColumnNumber = 0;
+	const c8* MemPtr = Loc.Text.begin();
+	while (*MemPtr != '\n' && MemPtr != Buf.Memory) {
+		--MemPtr;
+		++ColumnNumber;
+	}
+	if (ColumnNumber > 0)
+		--ColumnNumber;
+
 	OS << FilePath.c_str();
-	OS << ":" << LineNumber << ":";
+	OS << ":" << LineNumber << ":" << std::to_string(ColumnNumber) << ":";
 	SetTerminalColor(TerminalColorRed);
 	OS << " Error: ";
 	SetTerminalColor(TerminalColorDefault);

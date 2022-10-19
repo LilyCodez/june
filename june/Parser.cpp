@@ -204,7 +204,8 @@ june::AstNode* june::Parser::ParseStmt() {
 	case TokenKind::KW_IF:     Stmt = ParseIf();                 break;
 	case TokenKind::KW_CONTINUE:
 	case TokenKind::KW_BREAK:  Stmt = ParseLoopControl(); Match(';'); break;
-	case TokenKind::KW_NATIVE: {
+	case TokenKind::KW_NATIVE:
+	case TokenKind::KW_COMPTIME: {
 		mods::Mod Mods = ParseModifiers();
 		Token NameTok = CTok;
 		NextToken(); // Consuming name token
@@ -550,7 +551,7 @@ june::mods::Mod june::Parser::ParseModifiers() {
 			Error(CTok, "Duplicate modifier");
 		mods |= mods::NATIVE;
 
-		NextToken(); // Consuming native
+		NextToken(); // Consuming 'native' token
 
 		if (CTok.is('(')) {
 			NextToken(); // Consuming '(' token
@@ -571,6 +572,15 @@ june::mods::Mod june::Parser::ParseModifiers() {
 			NextToken(); // Consuming string literal
 			Match(')');
 		}
+		break;
+	}
+	case TokenKind::KW_COMPTIME: {
+		if (mods & mods::COMPTIME)
+			Error(CTok, "Duplicate modifier");
+		mods |= mods::COMPTIME;
+		
+		NextToken(); // Consuming 'comptime' token
+
 		break;
 	}
 	default:
@@ -1746,6 +1756,7 @@ void june::Parser::SkipRecovery(bool ParsingImports) {
 			// Include an modifiers since those come at
 			// the start of a statement.
 		case TokenKind::KW_NATIVE:
+		case TokenKind::KW_COMPTIME:
 			return;
 		case '{':
 			return;
