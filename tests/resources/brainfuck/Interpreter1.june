@@ -10,8 +10,7 @@ prog: c8* = "++++++++++[>+++++++>++++++++++>+++>+<<<<-]>++.>+.+++++++..+++.>++.<
 
 scan(dir: i32) {
 	// TODO: Make this a "normal" for loop when pc += dir; is supported in the increment zone
-	nest: i32 = dir;
-	loop dir*nest > 0 {
+	loop nest: i32 = dir; dir*nest > 0; pc += dir {
 		char: c8 = prog[pc+dir];
 		if (char == ']'){
 			nest--;
@@ -19,7 +18,6 @@ scan(dir: i32) {
 		if (char == '[') {
 			nest++;
 		}
-		pc += dir;
 	}
 }
 

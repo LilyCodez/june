@@ -1,0 +1,9 @@
+import Tests;
+
+main() {
+	sum: i32;
+	loop i: i32 = 0; i < 10; i += 1 {
+		sum += i;
+	}
+	Tests.print(sum);
+}

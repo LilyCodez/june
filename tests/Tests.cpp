@@ -148,6 +148,7 @@ int main() {
 		}());
 	RunTest(SRC("loops/Loops6.june"), "124 346 22 15 77 ");
 	RunTest(SRC("loops/Loops7.june"), "214 22 55 21 553 0 2 52 14 ");
+	RunTest(SRC("loops/Loops8.june"), 0 + 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9);
 	RunTest(SRC("fixedarrays/FixedArrays1.june"), "21 55 11 56 3 ");
 	RunTest(SRC("fixedarrays/FixedArrays2.june"), "412 21 5 6 4 0 ");
 	RunTest(SRC("fixedarrays/FixedArrays3.june"), "412 77 121 45 56 ");

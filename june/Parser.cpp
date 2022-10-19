@@ -684,7 +684,7 @@ june::RangeLoopStmt* june::Parser::ParseRangeLoop(Token LoopTok) {
 	Match(';');
 
 	if (CTok.isNot('{')) {
-		Loop->Inc = ParseExpr();
+		Loop->Inc = ParseAssignmentAndExprs();
 	}
 
 	ParseScopeStmts(Loop->Scope);
