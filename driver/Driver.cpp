@@ -20,6 +20,8 @@ Possible Options:
        Emits debug information.
     -out.name=<name>
        Sets the name of the executable.
+    -run
+       Executes the program after it is compiled and linked.
     -l<Library>
        Adds a library to the linker.
     -L<libpath>
@@ -56,6 +58,8 @@ int main(int argc, char* argv[]) {
 				C.StandAlone = true;
 			} else if (Opt == "emit.debug") {
 				C.EmitDebugInfo = true;
+			} else if (Opt == "run") {
+				C.RunProgram = true;
 			} else if (Opt == "help") {
 				llvm::outs() << HELP_MESSAGE << '\n';
 				return 0;

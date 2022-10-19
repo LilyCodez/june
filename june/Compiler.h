@@ -23,6 +23,7 @@ namespace june {
 		// the standard library.
 		bool StandAlone        = false;
 		bool EmitDebugInfo     = false;
+		bool RunProgram        = false;
 		const c8* PathToStandardLibrary = nullptr;
 		
 		Compiler();

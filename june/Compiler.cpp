@@ -310,6 +310,14 @@ void june::Compiler::Compile(llvm::SmallVector<const c8*, 1>& SourceDirectories)
 		         << std::filesystem::absolute(std::filesystem::current_path()).generic_string().c_str()
 		         << '/' << OutputName << '\n';
 	
+	if (RunProgram) {
+#ifdef OS_WINDOWS
+		system(OutputName.c_str());
+#elif defined(__unix__)
+		std::string RunProgramCmd = "./" + OutputName;
+		system(RunProgramCmd.c_str());
+#endif
+	}
 }
 
 void june::Compiler::CollectDirectoryFiles(const std::filesystem::path& DirectoryPath, u64 PrimaryPathLen) {
