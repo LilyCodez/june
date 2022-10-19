@@ -152,3 +152,11 @@ from(i: i32) -> String {
 	res.buffer[res.length] = '\0';
 	return res;
 }
+
+concat(a: String, b: String) -> String {
+	totalLength: i32 = a.length + b.length;
+	newString: c8* = new c8[totalLength];
+	Mem.memcpy(newString, a.buffer, a.length);
+	Mem.memcpy(newString + a.length, b.buffer, b.length);
+	return String(newString, totalLength);
+}
