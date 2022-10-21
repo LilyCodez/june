@@ -83,8 +83,8 @@ void RunPlayground() {
 	SourceDirectories.push_back(SRC("playground"));
 
 	june::Compiler Compiler;
-	//Compiler.StandAlone = true;
-	Compiler.PathToStandardLibrary = JUNE_COMPILER_STDLIB_SOURCE_DIR;
+	Compiler.StandAlone = true;
+	//Compiler.PathToStandardLibrary = JUNE_COMPILER_STDLIB_SOURCE_DIR;
 	//Compiler.EmitDebugInfo = true;
 	//Compiler.Verbose = true;
 	//Compiler.DisplayLLVMIR = true;

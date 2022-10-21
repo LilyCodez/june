@@ -16,14 +16,16 @@ restartLex:
 	const c8* TokStart = CurPtr;
 
 	if (*CurPtr == '#') {
+		bool FoundPreprocessor = false;
 		if (CurPtr == Buf.Memory || *(CurPtr-1) == '\n') {
 			HandlePredirectiveStart();
+			FoundPreprocessor = true;
 		}
 
 		// Checking for EOF
 		if (CurPtr == Buf.Memory + Buf.Length)
 			return CreateToken(TokenKind::TK_EOF, TokStart);
-		else if (*CurPtr == '#')
+		else if (*CurPtr == '#' && FoundPreprocessor)
 			goto restartLex;  // Immediately encounters another preprocessor so let's start over
 	}
 

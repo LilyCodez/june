@@ -5,6 +5,7 @@ import std.io.File;
 import std.io.FileFlags;
 import std.Sys;
 import std.Err;
+import std.ErrKind;
 
 InStream :: record {
 
@@ -23,54 +24,6 @@ InStream :: record {
 		this.handle = handle;
 	}
 #endif
-
-	InStream(file: File) {
-
-#if OS_WINDOWS	
-		accessFlags := 0u;
-		shareFlags  := 0u;
-		createFlags := 0u;
-		
-		if file.flags == 0 {
-			accessFlags = Win32.GENERIC_ALL;
-		}
-		
-		if (file.flags & FileFlags.IN) != 0 {
-			accessFlags |= Win32.GENERIC_READ;
-		}
-		
-		if (file.flags & FileFlags.OUT) != 0 {
-			accessFlags |= Win32.GENERIC_WRITE;
-		}
-		
-		if (file.flags & FileFlags.SHARE) != 0 {
-			shareFlags |= Win32.FILE_SHARE_READ;
-		}
-		
-		if (file.flags & FileFlags.CREATE) != 0 {
-			createFlags |= Win32.CREATE_NEW;
-		} else {
-			createFlags |= Win32.OPEN_EXISTING;
-		}
-		
-		handle = Win32.CreateFileA(file.path,
-		                           accessFlags,
-								   shareFlags,
-								   null,
-								   createFlags,
-								   Win32.FILE_ATTRIBUTE_NORMAL,
-								   null);
-		
-		if handle == Win32.INVALID_HANDLE_VALUE {
-			// TODO: Actual error handling
-			Sys.println("Failed to open file");
-			Sys.exit(1);
-		}
-#endif
-
-	// TODO: Unix!
-
-	}
 
 	read(buffer: c8*, len: u32) -> u32 {
 		numberOfBytersRead: u32;
@@ -115,4 +68,51 @@ InStream :: record {
 		Unix.close(handle);
 #endif
 	}
+}
+
+open(file :File) -> (InStream, Err) {
+
+#if OS_WINDOWS	
+		accessFlags := 0u;
+		shareFlags  := 0u;
+		createFlags := 0u;
+		
+		if file.flags == 0 {
+			accessFlags = Win32.GENERIC_ALL;
+		}
+		
+		if (file.flags & FileFlags.IN) != 0 {
+			accessFlags |= Win32.GENERIC_READ;
+		}
+		
+		if (file.flags & FileFlags.OUT) != 0 {
+			accessFlags |= Win32.GENERIC_WRITE;
+		}
+		
+		if (file.flags & FileFlags.SHARE) != 0 {
+			shareFlags |= Win32.FILE_SHARE_READ;
+		}
+		
+		if (file.flags & FileFlags.CREATE) != 0 {
+			createFlags |= Win32.CREATE_NEW;
+		} else {
+			createFlags |= Win32.OPEN_EXISTING;
+		}
+		
+		handle := Win32.CreateFileA(file.path,
+		                            accessFlags,
+								    shareFlags,
+								    null,
+								    createFlags,
+								    Win32.FILE_ATTRIBUTE_NORMAL,
+								    null);
+		
+		if handle == Win32.INVALID_HANDLE_VALUE {
+			return (InStream(handle), Err(ErrKind.FILE_IO, "Failed to open file stream"));
+		}
+
+		return (InStream(handle), Err.ok());
+#endif
+
+	// TODO: Unix!
 }

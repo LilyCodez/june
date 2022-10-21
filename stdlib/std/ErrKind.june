@@ -1,3 +1,4 @@
 
 comptime NONE          := 0;
 comptime NUMBER_FORMAT := 1;
+comptime FILE_IO       := 2;
