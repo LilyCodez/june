@@ -1,0 +1,3 @@
+
+comptime NONE          := 0;
+comptime NUMBER_FORMAT := 1;

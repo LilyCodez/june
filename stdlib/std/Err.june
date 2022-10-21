@@ -1,0 +1,22 @@
+import std.Sys;
+import std.ErrKind;
+
+ok() -> Err {
+	return Err(ErrKind.NONE, "");
+}
+
+Err :: record {
+	
+	kind: i32;
+	msg:  c8*;
+
+	Err(kind: i32, msg: c8*) {
+		this.kind = kind;
+		this.msg  = msg;
+	}
+
+	print() {
+		Sys.print("Error: ");
+		Sys.println(msg);
+	}
+}

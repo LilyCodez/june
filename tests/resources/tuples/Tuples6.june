@@ -1,0 +1,15 @@
+import Tests;
+
+func(a :i32) -> (i32, i32) {
+	return (314, a);
+}
+
+main() {
+	
+	a, b := func(3252);
+
+	Tests.print(a);
+	Tests.print(" ");
+	Tests.print(b);
+
+}

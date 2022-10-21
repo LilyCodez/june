@@ -1,0 +1,18 @@
+import Tests;
+
+A :: record {
+	f1 :i32;
+	f2 :i32 = 14;
+}
+
+a, b, c :(i32, i32, A);
+
+main() {
+	Tests.print(a);
+	Tests.print(" ");
+	Tests.print(b);
+	Tests.print(" ");
+	Tests.print(c.f1);
+	Tests.print(" ");
+	Tests.print(c.f2);
+}

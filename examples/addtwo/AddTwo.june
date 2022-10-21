@@ -1,4 +1,5 @@
 import std.Sys;
+import std.ErrKind;
 
 main() {
 	Sys.println("Input two numbers on two seperate lines:");
@@ -9,8 +10,13 @@ main() {
 	Sys.println();
 	Sys.println("Read in numbers:");
 
-	num1 := numStr1.parseInt();
-	num2 := numStr2.parseInt();
+	num1, e1 := numStr1.parseInt();
+	num2, e2 := numStr2.parseInt();
+	
+	if e1.kind != ErrKind.NONE || e2.kind != ErrKind.NONE {
+		Sys.println("Failed to parse integers");
+		return;
+	}
 
 	sum := num1 + num2;
 

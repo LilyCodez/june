@@ -56,13 +56,17 @@ namespace june {
 
 		llvm::Function* GenGlobalInitFuncDecl();
 		void GenGlobalPostponedAssignments();
+		void GenGlobalVarDeclList(VarDeclList* DeclList);
+		bool TypeNeedsRecordInit(Type* Ty);
 
 		void GenFuncDecl(FuncDecl* Func);
 		void GenGenericFuncDecl(GenericFuncDecl* Func, u32 BindingId);
 		void GenFuncBody(FuncDecl* Func);
 		void GenGlobalVarDecl(VarDecl* Global);
 		llvm::Value* GenLocalVarDecl(VarDecl* Var);
-		llvm::Value* GenVarDecl(llvm::Value* LLAddr, VarDecl* Var);
+		llvm::Value* GenLocalvarDeclList(VarDeclList* DeclList);
+		void DecomposeTupleIntoVariables(VarDeclList* DeclList);
+		llvm::Value* GenVarDeclAssignment(llvm::Value* LLAddr, VarDecl* Var);
 		llvm::Value* GenAlloca(VarDecl* Var);
 		
 		llvm::Value* GenRValue(AstNode* Node);
@@ -101,7 +105,8 @@ namespace june {
 		inline llvm::Value* CreateAlloca(Type* Ty, const c8* Name = "");
 
 		void GenDefaultValue(Type* Ty, llvm::Value* LLAddr);
-		bool GenDefaultTupleValue(TupleType* TupleTy, llvm::Value* LLAddr);
+		void GenDefaultValueNeedingRecordInitCalls(Type* Ty, llvm::Value* LLAddr);
+		void GenDefaultTupleValue(TupleType* TupleTy, llvm::Value* LLAddr);
 		void GenRecordArrayObjsInitCalls(FixedArrayType* ArrTy,
 			                             llvm::Value* LLArrStartPtr,
 			                             llvm::Value* LLTotalLinearLength);
@@ -159,14 +164,14 @@ namespace june {
 		llvm::Value* CreateTempAlloca(llvm::Type* LLTy);
 
 		void GenDefaultRecordInitCall(RecordDecl* Record, llvm::Value* LLAddr);
-
+		
 		llvm::Value* GenMalloc(llvm::Type* LLType, llvm::Value* LLArrSize);
 
 		llvm::Value* GenLLVMIntrinsicCall(FuncCall* Call);
 
 		FixedArrayType* GetArrayDestTy(Array* Arr);
 
-		llvm::Constant* GenGlobalConstVal(VarDecl* Global);
+		llvm::Constant* GenGlobalConstVal(VarDecl* Global, Expr* Assignment);
 
 		bool FuncNeedsRVO(FuncDecl* Func);
 

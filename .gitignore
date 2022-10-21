@@ -2,6 +2,8 @@
 **/Makefile
 **/CMakeCache.txt
 **/CMakeFiles/
+*.exe
+*.o
 
 out
 CMakeSettings.json

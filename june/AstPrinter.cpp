@@ -48,6 +48,14 @@ namespace june {
 		}
 	}
 
+	void PrintVarDeclList(const JuneContext& Context, const VarDeclList* DeclList, u32 Depth) {
+		llvm::outs() << "(decl-list)";
+		for (VarDecl* Var : DeclList->Decls) {
+			llvm::outs() << '\n';
+			PrintNode(Context, Var, Depth + 1);
+		}
+	}
+
 	void PrintRecordDecl(const JuneContext& Context, const RecordDecl* Record, u32 Depth) {
 		llvm::outs() << "(record| name=\"" << Record->Name << "\")";
 		if (!Record->Fields.empty()) {
@@ -364,6 +372,9 @@ namespace june {
 			break;
 		case AstKind::VAR_DECL:
 			PrintVarDecl(Context, ocast<const VarDecl*>(N), Depth);
+			break;
+		case AstKind::VAR_DECL_LIST:
+			PrintVarDeclList(Context, ocast<const VarDeclList*>(N), Depth);
 			break;
 		case AstKind::RECORD_DECL:
 			PrintRecordDecl(Context, ocast<const RecordDecl*>(N), Depth);

@@ -24,6 +24,7 @@ namespace june {
 
 	struct FuncDecl;
 	struct VarDecl;
+	struct VarDeclList;
 	struct RecordDecl;
 	struct Type;
 	struct Expr;
@@ -43,6 +44,7 @@ namespace june {
 		FUNC_DECL,
 		GENERIC_FUNC_DECL,
 		VAR_DECL,
+		VAR_DECL_LIST,
 		RECORD_DECL,
 
 		INNER_SCOPE,
@@ -220,6 +222,9 @@ namespace june {
 
 		Type* Ty;
 
+		// If the declaration is part of a list of declarations.
+		VarDeclList* ParentDeclList = nullptr;
+
 		// nullptr means there is no assignment
 		Expr* Assignment = nullptr;
 
@@ -235,6 +240,24 @@ namespace june {
 		llvm::StringRef NativeName;
 
 		VarDecl() : Decl(AstKind::VAR_DECL) {}
+
+	};
+
+	struct VarDeclList : AstNode {
+
+		llvm::SmallVector<VarDecl*, 2> Decls;
+		// Some sort of decomposable type like a tuple.
+		Type* Ty;
+		FileUnit*   FU;
+		RecordDecl* Record = nullptr;
+		bool UsesInferedTypes = false;
+		bool AlreadyGenerated = false;
+		bool HasBeenChecked   = false;
+		
+		Expr* Assignment      = nullptr;
+
+		VarDeclList()
+			: AstNode(AstKind::VAR_DECL_LIST) {}
 
 	};
 

@@ -4,6 +4,7 @@ import std.lang.String;
 import std.io.File;
 import std.io.FileFlags;
 import std.Sys;
+import std.Err;
 
 InStream :: record {
 
@@ -103,7 +104,7 @@ InStream :: record {
 #endif
 	}
 
-	readInt() -> i32 {
+	readInt() -> (i32, Err) {
 		return readLine().parseInt();
 	}
 

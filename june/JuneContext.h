@@ -50,10 +50,12 @@ namespace june {
 
 		void RequestGen(Decl* D);
 		u32 RequestGen(TypeBindList& Bindings, GenericFuncDecl* GenFunc);
-
+		
 		PointerType* GetCachedPointerType(Type* ElmTy) const;
 		
 		void RequestComptimeGen(ComptimeValue CV);
+
+		void AddGlobalPostponedAssignment(VarDecl* Global, Expr* Assignment);
 
 		// Integer Types
 		Type* I8Type;
@@ -101,8 +103,8 @@ namespace june {
 			Decl* D;
 		};
 
-		std::queue<DeclGen> QuededDeclsToGen;
-
+		std::queue<DeclGen>      QuededDeclsToGen;
+		
 		std::unordered_set<Decl*> UncheckedDecls;
 
 		// ----- LLVM -----
@@ -115,8 +117,17 @@ namespace june {
 		llvm::Function*    JuneStdLibInitFunc;
 		llvm::DenseMap<RecordDecl*, llvm::Function*>    DefaultRecordInitFuncs;
 		llvm::DenseMap<Identifier, llvm::Intrinsic::ID> LLVMIntrinsicsTable;
-		llvm::SmallVector<VarDecl*, 4>                  GlobalPostponedAssignments;
 
+		struct GlobalPostponedAssignment {
+			union {
+				VarDecl*     Global;
+				VarDeclList* DeclList;
+			};
+			bool  UsesDeclList = false;
+			Expr* Assignment;
+		};
+		llvm::SmallVector<GlobalPostponedAssignment, 16> GlobalPostponedAssignments;
+		
 		// LLVM Debugging basic types
 		llvm::DenseMap<RecordDecl*, llvm::DICompositeType*> DIRecordTys;
 

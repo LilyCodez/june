@@ -68,17 +68,13 @@ void june::Parser::Parse() {
 		switch (Node->Kind) {
 		case AstKind::RECORD_DECL:
 			break;
-		case AstKind::VAR_DECL: {
-			VarDecl* Var = ocast<VarDecl*>(Node);
-			if (Var->isNot(AstKind::ERROR)) {
-				Var->IsGlobal = true;
-				Context.UncheckedDecls.insert(Var);
-				auto it = FU->GlobalVars.find(Var->Name);
-				if (it != FU->GlobalVars.end()) {
-					Error(Var->Loc, "Redeclaration of global variable '%s'. First declared at line: %s",
-						Var->Name.Text, it->second->Loc.LineNumber);
-				}
-				FU->GlobalVars.insert({ Var->Name, Var });
+		case AstKind::VAR_DECL:
+			ProcessGlobalVar(ocast<VarDecl*>(Node));
+			break;
+		case AstKind::VAR_DECL_LIST: {
+			VarDeclList* DeclList = ocast<VarDeclList*>(Node);
+			for (VarDecl* Global : DeclList->Decls) {
+				ProcessGlobalVar(Global);
 			}
 			break;
 		}
@@ -172,6 +168,19 @@ void june::Parser::ParseImport() {
 		}
 	} else {
 		Error(ImportTk, "Failed to find import for path key '%s'", FilePath);
+	}
+}
+
+void june::Parser::ProcessGlobalVar(VarDecl* Global) {
+	if (Global->isNot(AstKind::ERROR)) {
+		Global->IsGlobal = true;
+		Context.UncheckedDecls.insert(Global);
+		auto it = FU->GlobalVars.find(Global->Name);
+		if (it != FU->GlobalVars.end()) {
+			Error(Global->Loc, "Redeclaration of global variable '%s'. First declared at line: %s",
+				Global->Name.Text, it->second->Loc.LineNumber);
+		}
+		FU->GlobalVars.insert({ Global->Name, Global });
 	}
 }
 
@@ -279,6 +288,50 @@ june::AstNode* june::Parser::ParseStmt() {
 			} else if (PeekedTok.is(TokenKind::COL_COL)) {
 				Token NameTok = CTok; NextToken();
 				Stmt = ParseRecordDecl(NameTok, 0);
+			} else if (PeekedTok.is(',')) {
+				Token StartTok = CTok;
+				llvm::SmallVector<Token> NamesToks;
+
+				bool MoreIdents = false;
+				NamesToks.push_back(CTok);
+				NextToken(); // Consuming for ident name
+				do {
+					NextToken(); // Consuming ','
+					Token NameTok = CTok;
+					if (NameTok.isNot(TokenKind::IDENT)) {
+						Error(NameTok, "Expected identifier for variable in declaration list");
+						SkipRecovery(false);
+						return NewNode<ErrorNode>(CTok);
+					}
+					NextToken(); // Consuming for ident name
+					NamesToks.push_back(NameTok);
+					MoreIdents = CTok.is(',');
+				} while (MoreIdents);
+				
+				VarDeclList* DeclList = NewNode<VarDeclList>(StartTok);
+				DeclList->FU     = FU;
+				DeclList->Record = CRecord;
+
+				for (Token& NameTok : NamesToks) {
+					VarDecl* Var = ParseVarDecl(NameTok, 0, false);
+					Var->ParentDeclList = DeclList;
+					DeclList->Decls.push_back(Var);
+				}
+
+				Match(':', "for variable declaration list");
+				if (CTok.isNot('=')) {
+					DeclList->Ty = ParseType();
+				} else {
+					DeclList->UsesInferedTypes = true;
+				}
+
+				if (CTok.is('=')) {
+					NextToken(); // Consuming '='
+					DeclList->Assignment = ParseExpr();
+				}
+				
+				Match(';');
+				return DeclList;
 			} else {
 				Stmt = ParseAssignmentAndExprs(); Match(';');
 			}	
@@ -414,7 +467,7 @@ june::VarDecl* june::Parser::ParseVarDecl(mods::Mod Mods) {
 	return ParseVarDecl(NameTok, Mods);
 }
 
-june::VarDecl* june::Parser::ParseVarDecl(Token NameTok, mods::Mod Mods) {
+june::VarDecl* june::Parser::ParseVarDecl(Token NameTok, mods::Mod Mods, bool ParseTypeInfo) {
 
 	Identifier Name = ParseIdentifier(NameTok, "Expected identifier for variable declaration");
 
@@ -458,16 +511,18 @@ june::VarDecl* june::Parser::ParseVarDecl(Token NameTok, mods::Mod Mods) {
 		}
 	}
 
-	Match(':');
-	if (CTok.is('=')) {
-		Var->UsesInferedType = true;
-	} else {
-		Var->Ty = ParseType();
-	}
+	if (ParseTypeInfo) {
+		Match(':');
+		if (CTok.is('=')) {
+			Var->UsesInferedType = true;
+		} else {
+			Var->Ty = ParseType();
+		}
 
-	if (CTok.is('=')) {
-		NextToken(); // Consuming '='
-		Var->Assignment = ParseExpr();
+		if (CTok.is('=')) {
+			NextToken(); // Consuming '='
+			Var->Assignment = ParseExpr();
+		}
 	}
 
 	return Var;

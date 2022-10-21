@@ -1,18 +1,20 @@
 import std.Mem;
 import std.Sys;
 import std.lang.Characters;
+import std.Err;
+import std.ErrKind;
 
 /*
  * The smallest possible radix for converting to/from strings
  * into numbers.
  */
-MIN_RADIX := 2;
+comptime MIN_RADIX := 2;
 
 /*
  * The largest possible radix for converting to/from strings
  * into numbers.
  */
-MAX_RADIX := 36;
+comptime MAX_RADIX := 36;
 
 String :: record {
 
@@ -42,7 +44,7 @@ String :: record {
 	 *
 	 * @return  a parsed signed integer.
 	 */
-	parseInt() -> i32 {
+	parseInt() -> (i32, Err) {
 		return parseInt(10);
 	}
 
@@ -55,22 +57,18 @@ String :: record {
 	 * @param   radix to be used during parsing
 	 * @return  a parsed signed integer.
 	 */
-	parseInt(radix: u32) -> i32 {
-		// TODO: Replace with actual error handling!
-
+	parseInt(radix: u32) -> (i32, Err) {
+		
 		if (empty()) {
-			Sys.println("NumberException: empty string");
-			Sys.exit(1);
+			return (0, Err(ErrKind.NUMBER_FORMAT, "empty string"));
 		}
 
 		if radix < MIN_RADIX {
-			Sys.println("NumberException: radix < 2");
-			Sys.exit(1);
+			return (0, Err(ErrKind.NUMBER_FORMAT, "radix < 2"));
 		}
 
 		if radix > MAX_RADIX {
-			Sys.println("NumberException: radix too large");
-			Sys.exit(1);
+			return (0, Err(ErrKind.NUMBER_FORMAT, "radix too large"));
 		}
 
 		isNeg := false;
@@ -82,13 +80,11 @@ String :: record {
 			if firstCh == '-' {
 				isNeg = true;
 			} else if firstCh != '+' {
-				Sys.println("NumberException: Invalid sequence start");
-				Sys.exit(1);
+				return (0, Err(ErrKind.NUMBER_FORMAT, "Invalid sequence start"));
 			}
 
 			if length == 1 {
-				Sys.println("NumberException: + or - by itself");
-				Sys.exit(1);
+				return (0, Err(ErrKind.NUMBER_FORMAT, "+ or - by itself"));
 			}
 
 			++i; // Move over the + or - character
@@ -100,20 +96,18 @@ String :: record {
 			digit :i32 = Characters.toDigitForRadix(ch, radix);
 
 			if digit < 0 {
-				Sys.println("NumberException: Character was not a digit");
-				Sys.exit(1);
+				return (0, Err(ErrKind.NUMBER_FORMAT, "Character was not a digit"));
 			}
 
 			prevVal = result;
 			result = result * radix + digit;
 
 			if result / radix < prevVal {
-				Sys.println("NumberException: Overflow");
-				Sys.exit(1);
+				return (0, Err(ErrKind.NUMBER_FORMAT, "Overflow"));
 			}
 		}
 
-		return isNeg ? -result |> result;
+		return (isNeg ? -result |> result, Err.ok());
 	}
 
 	empty() -> bool {

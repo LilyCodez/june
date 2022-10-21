@@ -253,3 +253,7 @@ june::PointerType* june::JuneContext::GetCachedPointerType(Type* ElmTy) const {
 void june::JuneContext::RequestComptimeGen(ComptimeValue CV) {
 	ComptimeValues.push(CV);
 }
+
+void june::JuneContext::AddGlobalPostponedAssignment(VarDecl* Global, Expr* Assignment) {
+	GlobalPostponedAssignments.push_back(GlobalPostponedAssignment{ Global, false, Assignment });
+}

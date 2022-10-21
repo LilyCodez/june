@@ -1,0 +1,10 @@
+import Tests;
+
+y := 214;
+a, b := (124, 11552 + y);
+
+main() {
+	Tests.print(a);
+	Tests.print(" ");
+	Tests.print(b);
+}

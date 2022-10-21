@@ -60,6 +60,8 @@ namespace june {
 
 		llvm::StringRef NativeModifierName;
 
+		void ProcessGlobalVar(VarDecl* Global);
+
 		void ParseImport();
 
 		void ParseScopeStmts(LexScope& Scope);
@@ -69,7 +71,7 @@ namespace june {
 
 		FuncDecl* ParseFuncDecl(Token NameTok, mods::Mod Mods, llvm::SmallVector<Identifier>& Generics);
 		VarDecl* ParseVarDecl(mods::Mod Mods);
-		VarDecl* ParseVarDecl(Token NameTok, mods::Mod Mods);
+		VarDecl* ParseVarDecl(Token NameTok, mods::Mod Mods, bool ParseTypeInfo = true);
 		RecordDecl* ParseRecordDecl(Token NameTok, mods::Mod Mods);
 		Identifier ParseIdentifier(const c8* ErrorMessage);
 		Identifier ParseIdentifier(Token PossibleIdent, const c8* ErrorMessage);

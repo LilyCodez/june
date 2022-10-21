@@ -292,26 +292,23 @@ void june::IRGen::GenGlobalVar(VarDecl* Global) {
 		return; // Global variables do not get initialized.
 	}
 
+	if (Global->ParentDeclList) {
+		GenGlobalVarDeclList(Global->ParentDeclList);
+		return;
+	}
+
 	llvm::GlobalVariable* LLGVar =
 		llvm::cast<llvm::GlobalVariable>(Global->LLAddress);
-
-	LLGVar->setInitializer(GenGlobalConstVal(Global));
+	LLGVar->setInitializer(GenGlobalConstVal(Global, Global->Assignment));
 
 	if (Global->Assignment) {
 		if (!Global->Assignment->IsFoldable) {
 			// Could not be simply folded into a value so it
 			// requires further initialization
-			Context.GlobalPostponedAssignments.push_back(Global);
+			Context.AddGlobalPostponedAssignment(Global, Global->Assignment);
 		}
-	} else if (Global->Ty->GetKind() == TypeKind::FIXED_ARRAY) {
-		if (Global->Ty->AsFixedArrayType()->GetBaseType()->GetKind() == TypeKind::RECORD) {
-			// The objects of the array need to have their constructors
-			// called.
-			Context.GlobalPostponedAssignments.push_back(Global);
-		}
-	} else if (Global->Ty->GetKind() == TypeKind::RECORD) {
-		// Need to default initialize a record
-		Context.GlobalPostponedAssignments.push_back(Global);
+	} else if (TypeNeedsRecordInit(Global->Ty)) {
+		Context.AddGlobalPostponedAssignment(Global, Global->Assignment);
 	}
 
 	if (DisplayLLVMIR) {
@@ -567,11 +564,54 @@ llvm::Value* june::IRGen::GenLocalVarDecl(VarDecl* Var) {
 		assert(Var->LLAddress && "The address should have been generated at the start of the function!");
 		if (EmitDebugInfo)
 			GetDIEmitter(Var)->EmitLocalVar(Var, Builder);
-		return GenVarDecl(GetAddressOfVar(Var), Var);
+		return GenVarDeclAssignment(GetAddressOfVar(Var), Var);
 	}
 }
 
-llvm::Value* june::IRGen::GenVarDecl(llvm::Value* LLAddr, VarDecl* Var) {
+llvm::Value* june::IRGen::GenLocalvarDeclList(VarDeclList* DeclList) {
+
+	if (DeclList->Assignment) {
+		if (DeclList->Assignment->is(AstKind::TUPLE)) {
+			// Instead of creating a tuple and redirecting the values it is
+			// more efficient to just directly assign values of the tuple
+			// to each of the variables.
+			Tuple* Tup = ocast<Tuple*>(DeclList->Assignment);
+			for (u32 i = 0; i < DeclList->Decls.size(); i++) {
+				GenAssignment(DeclList->Decls[i]->LLAddress, Tup->Values[i]);
+			}
+		} else if (DeclList->Ty->GetKind() == TypeKind::TUPLE) {
+			// Redirect the result of the tuple into the variables
+			DecomposeTupleIntoVariables(DeclList);
+		}
+	} else if (DeclList->Ty->GetKind() == TypeKind::TUPLE) {
+		TupleType* TupleTy = DeclList->Ty->AsTupleType();
+		for (u32 i = 0; i < DeclList->Decls.size(); i++) {
+			GenDefaultValue(TupleTy->SubTypes[i], DeclList->Decls[i]->LLAddress);
+		}
+	}
+
+	return nullptr;
+}
+
+void june::IRGen::DecomposeTupleIntoVariables(VarDeclList* DeclList) {
+	// Redirect the result of the tuple into the variables
+	llvm::Value* LLTuple = GenNode(DeclList->Assignment);
+	if (!LLTuple->getType()->isPointerTy()) {
+		// If it is not a pointer type then it's the raw data
+		// and therefore needs temporary memory.
+		llvm::Value* LLTupleAddr = CreateTempAlloca(LLTuple->getType());
+		Builder.CreateStore(LLTuple, LLTupleAddr);
+		LLTuple = LLTupleAddr;
+	}
+
+	for (u32 i = 0; i < DeclList->Decls.size(); i++) {
+		llvm::Value* LLVarAddress = DeclList->Decls[i]->LLAddress;
+		llvm::Value* LLValue = CreateLoad(CreateStructGEP(LLTuple, i));
+		Builder.CreateStore(LLValue, LLVarAddress);
+	}
+}
+
+llvm::Value* june::IRGen::GenVarDeclAssignment(llvm::Value* LLAddr, VarDecl* Var) {
 	if (Var->Assignment) {
 		GenAssignment(LLAddr, Var->Assignment);
 	} else {
@@ -600,6 +640,8 @@ llvm::Value* june::IRGen::GenNode(AstNode* Node) {
 	switch (Node->Kind) {
 	case AstKind::VAR_DECL:
 		return GenLocalVarDecl(ocast<VarDecl*>(Node));
+	case AstKind::VAR_DECL_LIST:
+		return GenLocalvarDeclList(ocast<VarDeclList*>(Node));
 	case AstKind::INNER_SCOPE:
 	case AstKind::ELSE_SCOPE:
 		return GenInnerScope(ocast<InnerScopeStmt*>(Node));
@@ -691,23 +733,105 @@ void june::IRGen::GenGlobalPostponedAssignments() {
 	// Iterator since it is modifiable during generation
 	auto it = Context.GlobalPostponedAssignments.begin();
 	while (it != Context.GlobalPostponedAssignments.end()) {
-		VarDecl* Var = *it;
-		if (Var->Assignment) {
-			GenAssignment(Var->LLAddress, Var->Assignment);
-		} else {
-			if (Var->Ty->GetKind() == TypeKind::FIXED_ARRAY) {
-				FixedArrayType* ArrTy = Var->Ty->AsFixedArrayType();
-				if (ArrTy->GetBaseType()->GetKind() == TypeKind::RECORD) {
-					llvm::Value* LLArrStartPtr = GetArrayAsPtrGeneral(Var->LLAddress, ArrTy->GetNestingLevel() + 1);
-					llvm::Value* LLTotalLinearLength = GetLLUInt32(ArrTy->GetTotalLinearLength(), LLContext);
-					GenRecordArrayObjsInitCalls(ArrTy, LLArrStartPtr, LLTotalLinearLength);
-				}
-			} else if (Var->Ty->GetKind() == TypeKind::RECORD) {
-				GenDefaultValue(Var->Ty, Var->LLAddress);
+		JuneContext::GlobalPostponedAssignment PostponedAssignment = *it;
+		if (!PostponedAssignment.UsesDeclList) {
+			VarDecl* Global = PostponedAssignment.Global;
+			if (PostponedAssignment.Assignment) {
+				GenAssignment(Global->LLAddress, PostponedAssignment.Assignment);
+			} else {
+				GenDefaultValueNeedingRecordInitCalls(Global->Ty, Global->LLAddress);
 			}
+		} else {
+			DecomposeTupleIntoVariables(PostponedAssignment.DeclList);
 		}
 		++it;
 	}
+}
+
+void june::IRGen::GenGlobalVarDeclList(VarDeclList* DeclList) {
+	if (DeclList->AlreadyGenerated) return;
+	DeclList->AlreadyGenerated = true;
+
+	if (DeclList->Assignment) {
+		// See: GenLocalvarDeclList for an explaination
+		//      w.r.t how this works. (Difference being it
+		//      works on global variables)
+		if (DeclList->Assignment->is(AstKind::TUPLE)) {
+			Tuple* Tup = ocast<Tuple*>(DeclList->Assignment);
+			for (u32 i = 0; i < DeclList->Decls.size(); i++) {
+				VarDecl* Global = DeclList->Decls[i];
+				llvm::GlobalVariable* LLGVar =
+					llvm::cast<llvm::GlobalVariable>(Global->LLAddress);
+				
+				Expr* Assignment = Tup->Values[i];
+				LLGVar->setInitializer(GenGlobalConstVal(Global, Assignment));
+
+				if (!Assignment->IsFoldable) {
+					Context.AddGlobalPostponedAssignment(Global, Assignment);
+				}
+			}
+		} else if (DeclList->Ty->GetKind() == TypeKind::TUPLE) {
+			// Still need to provide default values for the global variables
+			for (u32 i = 0; i < DeclList->Decls.size(); i++) {
+				VarDecl* Global = DeclList->Decls[i];
+				llvm::GlobalVariable* LLGVar =
+					llvm::cast<llvm::GlobalVariable>(Global->LLAddress);
+				LLGVar->setInitializer(GenZeroedValue(Global->Ty));
+			}
+
+			// Redirecting the values of the tuple later
+			JuneContext::GlobalPostponedAssignment PostponedAssignment;
+			PostponedAssignment.DeclList = DeclList;
+			PostponedAssignment.UsesDeclList = true;
+			PostponedAssignment.Assignment = DeclList->Assignment;
+			Context.GlobalPostponedAssignments.push_back(PostponedAssignment);
+		}
+	} else {
+		// Since there is no assignment, zero initializing all the
+		// variables.
+		for (VarDecl* Global : DeclList->Decls) {
+			llvm::GlobalVariable* LLGVar =
+				llvm::cast<llvm::GlobalVariable>(Global->LLAddress);
+			LLGVar->setInitializer(GenZeroedValue(Global->Ty));
+
+			if (TypeNeedsRecordInit(Global->Ty)) {
+				Context.AddGlobalPostponedAssignment(Global, nullptr);
+			}
+		}
+	}
+
+	if (DisplayLLVMIR) {
+		for (VarDecl* Global : DeclList->Decls) {
+			llvm::GlobalVariable* LLGVar =
+				llvm::cast<llvm::GlobalVariable>(Global->LLAddress);
+			LLGVar->print(llvm::outs());
+			llvm::outs() << '\n';
+		}
+	}
+}
+
+bool june::IRGen::TypeNeedsRecordInit(Type* Ty) {
+	if (Ty->GetKind() == TypeKind::FIXED_ARRAY) {
+		Type* BaseTy = Ty->AsFixedArrayType()->GetBaseType();
+		if (BaseTy->GetKind() == TypeKind::RECORD) {
+			// The objects of the array need to have their constructors
+			// called.
+			return BaseTy->AsRecordType()->Record->FieldsHaveAssignment;
+		} else if (BaseTy->GetKind() == TypeKind::TUPLE) {
+			return TypeNeedsRecordInit(BaseTy);
+		}
+	} else if (Ty->GetKind() == TypeKind::RECORD) {
+		// Only needs its default record called if the fields have assignment
+		return Ty->AsRecordType()->Record->FieldsHaveAssignment;
+	} else if (Ty->GetKind() == TypeKind::TUPLE) {
+		TupleType* TupleTy = Ty->AsTupleType();
+		for (Type* ValueTy : TupleTy->SubTypes) {
+			if (TypeNeedsRecordInit(ValueTy)) {
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 llvm::Value* june::IRGen::GenRValue(AstNode* Node) {
@@ -745,6 +869,9 @@ llvm::Value* june::IRGen::GenRValue(AstNode* Node) {
 		}
 		break;
 	}
+	case AstKind::TUPLE:
+		LLValue = CreateLoad(LLValue);
+		break;
 	case AstKind::UNARY_OP:
 		if (ocast<UnaryOp*>(Node)->Op == '*') {
 			// Dereference operators load the original
@@ -1030,7 +1157,7 @@ llvm::Value* june::IRGen::GenIdentRef(IdentRef* IRef) {
 				// it should be evaluted in an anoyomous function
 				assert(!"Not handled yet");
 			} else {
-				Var->LLComptimeVal = llvm::cast<llvm::Constant>(GenNode(Var->Assignment));
+				Var->LLComptimeVal = llvm::cast<llvm::Constant>(GenRValue(Var->Assignment));
 			}
 		}
 		return Var->LLComptimeVal;
@@ -1134,7 +1261,7 @@ llvm::Value* june::IRGen::GenFuncCall(llvm::Value* LLAddr, FuncCall* Call) {
 		for (VarDecl* Field : Record->FieldsByIdxOrder) {
 			if (FieldIndexesWithVals.find(Field->FieldIdx) == FieldIndexesWithVals.end()) {
 				llvm::Value* LLFieldAddr = CreateStructGEP(LLAddr, Field->FieldIdx);
-				GenVarDecl(LLFieldAddr, Field);
+				GenVarDeclAssignment(LLFieldAddr, Field);
 			}
 		}
 
@@ -2038,16 +2165,21 @@ inline llvm::Value* june::IRGen::CreateAlloca(Type* Ty, const c8* Name) {
 }
 
 void june::IRGen::GenDefaultValue(Type* Ty, llvm::Value* LLAddr) {
+	if (TypeNeedsRecordInit(Ty)) {
+		GenDefaultValueNeedingRecordInitCalls(Ty, LLAddr);
+		return;
+	}
+	Builder.CreateStore(GenZeroedValue(Ty), LLAddr);
+}
+
+void june::IRGen::GenDefaultValueNeedingRecordInitCalls(Type* Ty, llvm::Value* LLAddr) {
 	if (Ty->GetKind() == TypeKind::RECORD) {
 		RecordDecl* Record = Ty->AsRecordType()->Record;
 		if (Record->FieldsHaveAssignment) {
 			GenDefaultRecordInitCall(Record, LLAddr);
-			return;
 		}
 	} else if (Ty->GetKind() == TypeKind::TUPLE) {
-		if (GenDefaultTupleValue(Ty->AsTupleType(), LLAddr)) {
-			return;
-		}
+		GenDefaultTupleValue(Ty->AsTupleType(), LLAddr);
 	} else if (Ty->GetKind() == TypeKind::FIXED_ARRAY) {
 		FixedArrayType* ArrTy = Ty->AsFixedArrayType();
 		Type* ArrBaseTy = ArrTy->GetBaseType();
@@ -2058,26 +2190,15 @@ void june::IRGen::GenDefaultValue(Type* Ty, llvm::Value* LLAddr) {
 			return;
 		}
 	}
-	Builder.CreateStore(GenZeroedValue(Ty), LLAddr);
 }
 
-bool june::IRGen::GenDefaultTupleValue(TupleType* TupleTy, llvm::Value* LLAddr) {
-	bool RecordsNeedDefaultInitCall = false;
+void june::IRGen::GenDefaultTupleValue(TupleType* TupleTy, llvm::Value* LLAddr) {
 	u32 IdxCount = 0;
 	for (Type* ValTy : TupleTy->SubTypes) {
-		if (ValTy->GetKind() == TypeKind::RECORD) {
-			RecordDecl* Record = ValTy->AsRecordType()->Record;
-			if (Record->FieldsHaveAssignment) {
-				GenDefaultRecordInitCall(Record, CreateStructGEP(LLAddr, IdxCount));
-				RecordsNeedDefaultInitCall = true;
-			}
-		} else if (ValTy->GetKind() == TypeKind::TUPLE) {
-			RecordsNeedDefaultInitCall
-				|= GenDefaultTupleValue(ValTy->AsTupleType(), CreateStructGEP(LLAddr, IdxCount));
-		}
+		llvm::Value* LLValAddr = CreateStructGEP(LLAddr, IdxCount);
+		GenDefaultValue(ValTy, LLValAddr);
 		++IdxCount;
 	}
-	return RecordsNeedDefaultInitCall;
 }
 
 void june::IRGen::GenRecordArrayObjsInitCalls(FixedArrayType* ArrTy,
@@ -2096,14 +2217,18 @@ void june::IRGen::GenRecordArrayObjsInitCalls(FixedArrayType* ArrTy,
 	Builder.CreateBr(LoopBB);
 	Builder.SetInsertPoint(LoopBB);
 
-	RecordType* RecordTy = ArrTy->GetBaseType()->AsRecordType();
+	Type* BaseTy = ArrTy->GetBaseType()->AsRecordType();
 	// Pointer used to traverse through the array
-	llvm::PHINode* LLArrPtr = Builder.CreatePHI(llvm::PointerType::get(GenType(RecordTy), 0), 0, "obj.loop.ptr");
+	llvm::PHINode* LLArrPtr = Builder.CreatePHI(llvm::PointerType::get(GenType(BaseTy), 0), 0, "obj.loop.ptr");
 
 	// Incoming value to the start of the array from the incoming block
 	LLArrPtr->addIncoming(LLArrStartPtr, BeforeLoopBB);
 
-	GenDefaultRecordInitCall(RecordTy->Record, LLArrPtr);
+	if (BaseTy->GetKind() == TypeKind::RECORD) {
+		GenDefaultRecordInitCall(BaseTy->AsRecordType()->Record, LLArrPtr);
+	} else { // Tuple case - The tuples contain records
+		GenDefaultTupleValue(BaseTy->AsTupleType(), LLArrPtr);
+	}
 
 	// Move to the next element in the array
 	llvm::Value* LLNextElementPtr = CreateInBoundsGEP(LLArrPtr, { GetLLUInt32(1, LLContext) });
@@ -2423,7 +2548,7 @@ june::FixedArrayType* june::IRGen::GetArrayDestTy(Array* Arr) {
 	return DestTy;
 }
 
-llvm::Constant* june::IRGen::GenGlobalConstVal(VarDecl* Global) {
+llvm::Constant* june::IRGen::GenGlobalConstVal(VarDecl* Global, Expr* Assignment) {
 	Type* Ty = Global->Ty;
 	if (Ty->GetKind() == TypeKind::RECORD || Ty->GetKind() == TypeKind::TUPLE) {
 		// TODO: For now im just zero initializing
@@ -2431,13 +2556,13 @@ llvm::Constant* june::IRGen::GenGlobalConstVal(VarDecl* Global) {
 		//       foldable then it should create a non-zeroed
 		//       constant struct
 		return GenZeroedValue(Ty);
-	} else if (!Global->Assignment) {
+	} else if (!Assignment) {
 		return GenZeroedValue(Ty);
 	} else {
-		if (Global->Assignment->IsFoldable) {
-			if (Global->Assignment->is(AstKind::ARRAY)) {
+		if (Assignment->IsFoldable) {
+			if (Assignment->is(AstKind::ARRAY)) {
 
-				Array* Arr = ocast<Array*>(Global->Assignment);
+				Array* Arr = ocast<Array*>(Assignment);
 				
 				if (Global->Ty->GetKind() == TypeKind::POINTER) {
 					// The destination is a pointer so a global array needs
@@ -2447,10 +2572,10 @@ llvm::Constant* june::IRGen::GenGlobalConstVal(VarDecl* Global) {
 					return llvm::cast<llvm::Constant>(GetArrayAsPtr1Nesting(LLGArr));
 				} else if (Global->Ty->GetKind() == TypeKind::FIXED_ARRAY) {
 					return GenConstArrayForFixedArray(
-						ocast<Array*>(Global->Assignment), GetArrayDestTy(Arr));
+						ocast<Array*>(Assignment), GetArrayDestTy(Arr));
 				}
 			}
-			return llvm::cast<llvm::Constant>(GenRValue(Global->Assignment));
+			return llvm::cast<llvm::Constant>(GenRValue(Assignment));
 		} else {
 			// Not foldable so it recieves a default value and
 			// it initialized later

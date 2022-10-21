@@ -76,9 +76,19 @@ namespace june {
 			ResetExpr(ocast<Expr*>(Node));
 			break;
 		}
+		case AstKind::RECORD_DECL: {
+			RecordDecl* Record = ocast<RecordDecl*>(Node);
+			Record->HasBeenChecked = false;
+			Record->IsBeingChecked = false;
+			// TODO: Record->LLStructTy = nullptr; ??
+			break;
+		}
 		case AstKind::FUNC_DECL:
 		case AstKind::GENERIC_FUNC_DECL: {
 			FuncDecl* Func = ocast<GenericFuncDecl*>(Node);
+			Func->LLAddress = nullptr;
+			Func->HasBeenChecked = false;
+			Func->IsBeingChecked = false;
 			for (AstNode* Stmt : Func->Scope.Stmts) {
 				ResetNode(Stmt);
 			}
@@ -87,8 +97,20 @@ namespace june {
 		case AstKind::VAR_DECL: {
 			VarDecl* Var = ocast<VarDecl*>(Node);
 			Var->LLComptimeVal = nullptr;
+			Var->LLAddress = nullptr;
+			Var->HasBeenChecked = false;
+			Var->IsBeingChecked = false;
 			if (Var->Assignment) {
 				ResetNode(Var->Assignment);
+			}
+			break;
+		}
+		case AstKind::VAR_DECL_LIST: {
+			VarDeclList* DeclList = ocast<VarDeclList*>(Node);
+			DeclList->AlreadyGenerated = false;
+			DeclList->HasBeenChecked = false;
+			for (VarDecl* Var : DeclList->Decls) {
+				ResetNode(Var);
 			}
 			break;
 		}

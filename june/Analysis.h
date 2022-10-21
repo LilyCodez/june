@@ -63,9 +63,12 @@ namespace june {
 		// and decremented when existed
 		u32 LoopDepth = 0;
 
+		bool CheckInferedTypeAssignment(AstNode* Decl, Expr* Assignment);
+
 		void CheckScope(const LexScope& LScope, Scope& NewScope);
 	
 		bool CheckInnerScope(InnerScopeStmt* InnerScope);
+		void CheckVarDeclList(VarDeclList* DeclList);
 		void CheckReturn(ReturnStmt* Ret);
 		void CheckRangeLoop(RangeLoopStmt* Loop);
 		void CheckIteratorLoop(IteratorLoopStmt* Loop);

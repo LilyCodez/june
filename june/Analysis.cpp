@@ -139,12 +139,6 @@ CField  = nullptr;           \
 CGlobal = nullptr;           \
 YIELD_ERROR(Var)
 
-	if (Var->UsesInferedType) {
-		if (Var->Assignment->is(AstKind::NULLPTR)) {
-			VAR_YIELD(Error(Var, "Cannot infer the type from a null assignment"));
-		}
-	}
-
 	if (Var->Mods & mods::Mods::NATIVE && Var->FieldIdx != -1) {
 		VAR_YIELD(Error(Var, "Variables marked 'native' cannot be a field"));
 	}
@@ -162,6 +156,9 @@ YIELD_ERROR(Var)
 		}
 
 		if (Var->UsesInferedType) {
+			if (!CheckInferedTypeAssignment(Var, Var->Assignment)) {
+				VAR_YIELD();
+			}
 			Var->Ty = Var->Assignment->Ty;
 		}
 
@@ -173,7 +170,7 @@ YIELD_ERROR(Var)
 			VAR_YIELD(Error(Var, "Cannot infer the type from an assignment of an undefined type"));
 		}
 
-		if (!IsAssignableTo(Var->Ty, Var->Assignment)) {
+		if (!Var->UsesInferedType && !IsAssignableTo(Var->Ty, Var->Assignment)) {
 			VAR_YIELD(Error(Var,
 				"Cannot assign value of type '%s' to variable of type '%s'",
 				Var->Assignment->Ty->ToStr(), Var->Ty->ToStr()));
@@ -262,6 +259,20 @@ void june::Analysis::CheckGenericFuncDecl(GenericFuncDecl* GenFunc, u32 BindingI
 	UnbindTypes(GenFunc);
 }
 
+bool june::Analysis::CheckInferedTypeAssignment(AstNode* Decl, Expr* Assignment) {
+	if (Assignment->is(AstKind::NULLPTR)) {
+		Error(Decl, "Cannot infer the type from a null assignment");
+		return false;
+	}
+
+	if (Assignment->Ty->is(Context.UndefinedType)) {
+		Error(Decl, "Cannot infer the type from an undefined type");
+		return false;
+	}
+
+	return true;
+}
+
 void june::Analysis::CheckScope(const LexScope& LScope, Scope& NewScope) {
 	NewScope.Parent = LocScope;
 	LocScope = &NewScope;
@@ -276,10 +287,16 @@ void june::Analysis::CheckScope(const LexScope& LScope, Scope& NewScope) {
 			continue;
 		}
 
+		if (Stmt->is(AstKind::RECORD_DECL)) {
+			Error(Stmt, "records declared inside functions current not supported");
+			continue;
+		}
+
 		// Ensuring that it is actually a valid statement.
 		switch (Stmt->Kind) {
 		case AstKind::FUNC_DECL:
 		case AstKind::VAR_DECL:
+		case AstKind::VAR_DECL_LIST:
 		case AstKind::INNER_SCOPE:
 		case AstKind::ELSE_SCOPE:
 		case AstKind::RETURN:
@@ -337,6 +354,9 @@ void june::Analysis::CheckNode(AstNode* Node) {
 	switch (Node->Kind) {
 	case AstKind::VAR_DECL:
 		CheckVarDecl(ocast<VarDecl*>(Node));
+		break;
+	case AstKind::VAR_DECL_LIST:
+		CheckVarDeclList(ocast<VarDeclList*>(Node));
 		break;
 	case AstKind::INNER_SCOPE:
 	case AstKind::ELSE_SCOPE:
@@ -413,6 +433,59 @@ bool june::Analysis::CheckInnerScope(InnerScopeStmt* InnerScope) {
 	Scope NewScope(InnerScope);
 	CheckScope(InnerScope->Scope, NewScope);
 	return NewScope.AllPathsReturn;
+}
+
+void june::Analysis::CheckVarDeclList(VarDeclList* DeclList) {
+	if (DeclList->HasBeenChecked) return;
+	DeclList->HasBeenChecked = true;
+
+	FU      = DeclList->FU;
+	CRecord = DeclList->Record;
+
+	if (DeclList->Assignment) {
+
+		CheckNode(DeclList->Assignment);
+
+		if (DeclList->Assignment->Ty->is(Context.ErrorType)) {
+			return;
+		}
+
+		if (DeclList->UsesInferedTypes) {
+			if (!CheckInferedTypeAssignment(DeclList, DeclList->Assignment)) {
+				return;
+			}
+		}
+
+		if (!DeclList->UsesInferedTypes && !IsAssignableTo(DeclList->Ty, DeclList->Assignment)) {
+			Error(DeclList, "Cannot assign value of type '%s' to a declaration list of type '%s'",
+				DeclList->Assignment->Ty->ToStr(), DeclList->Ty->ToStr());
+			return;
+		}
+
+		DeclList->Ty = DeclList->Assignment->Ty;
+	}
+
+	if (DeclList->Ty->GetKind() != TypeKind::TUPLE) {
+		Error(DeclList, "Cannot decompose type '%s' into a list of assignments",
+			DeclList->Ty->ToStr());
+		return;
+	}
+
+	if (DeclList->Ty->GetKind() == TypeKind::TUPLE) {
+		TupleType* TupleTy = DeclList->Ty->AsTupleType();
+		if (TupleTy->SubTypes.size() != DeclList->Decls.size()) {
+			Error(DeclList, "Cannot decompose a tuple of type '%s' into '%s' declarations",
+				DeclList->Ty->ToStr(), DeclList->Decls.size());
+			return;
+		}
+		
+		// Assigning the types to the declarations and processing them
+		for (u32 i = 0; i < DeclList->Decls.size(); i++) {
+			VarDecl* Var = DeclList->Decls[i];
+			Var->Ty = TupleTy->SubTypes[i];
+			CheckVarDecl(Var);
+		}
+	}
 }
 
 void june::Analysis::CheckReturn(ReturnStmt* Ret) {
@@ -1111,6 +1184,13 @@ void june::Analysis::CheckDefaultRecordInitFuncCall(FuncCall* Call, RecordDecl* 
 
 	if (CanidateHasNameSlotTaken) {
 		DisplayErrorForNamedArgsSlotTaken(Call, true);
+	}
+
+	for (u32 i = 0; i < Call->Args.size(); i++) {
+		CreateCast(Call->Args[i], Record->FieldsByIdxOrder[i]->Ty);
+	}
+	for (FuncCall::NamedArg& NamedArg : Call->NamedArgs) {
+		CreateCast(NamedArg.AssignValue, Record->FieldsByIdxOrder[NamedArg.VarRef->FieldIdx]->Ty);
 	}
 
 	Call->Ty = GetRecordType(Record);
@@ -1933,10 +2013,10 @@ void june::Analysis::CheckTernaryCond(TernaryCond* Ternary) {
 	}
 	CreateCast(Ternary->Val2, Ternary->Val1->Ty);
 
-	if (!Ternary->Val1->IsFoldable || !Ternary->Val1->IsFoldable) {
+	if (!Ternary->Val1->IsFoldable || !Ternary->Val2->IsFoldable) {
 		Ternary->IsComptimeCompat = false;
 	}
-	if (!Ternary->Val1->IsComptimeCompat || !Ternary->Val1->IsComptimeCompat) {
+	if (!Ternary->Val1->IsComptimeCompat || !Ternary->Val2->IsComptimeCompat) {
 		Ternary->IsComptimeCompat = false;
 	}
 	Ternary->Ty = Ternary->Val1->Ty;
@@ -2202,7 +2282,12 @@ void june::Analysis::EnsureChecked(SourceLoc ELoc, VarDecl* Var) {
 	} else {
 		Var->DepD = CGlobal;
 	}
-	A.CheckVarDecl(Var);
+	if (Var->ParentDeclList) {
+		// Want to check the entire list instead
+		A.CheckVarDeclList(Var->ParentDeclList);
+	} else {
+		A.CheckVarDecl(Var);
+	}
 	Var->DepD = nullptr; // Dependency finished.
 }
 
