@@ -112,7 +112,9 @@ open(file :File) -> (InStream, Err) {
 		}
 
 		return (InStream(handle), Err.ok());
+#elif OS_UNIX
+	// TODO: Unix!
+		return (InStream(0), Err.ok());
 #endif
 
-	// TODO: Unix!
 }
