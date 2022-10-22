@@ -1,11 +1,11 @@
 // TOOD : replace with enum once supported.
-IN  := 0x0001;
-OUT := 0x0002;
+comptime IN  := 0x0001;
+comptime OUT := 0x0002;
 
 /* More than one open instance of the
 	 * file can be opened and accessed at the
 	 * same time */
-SHARE := 0x0004;
+comptime SHARE := 0x0004;
 
 /* Creates the file if it does not exist */
-CREATE := 0x0008;
+comptime CREATE := 0x0008;

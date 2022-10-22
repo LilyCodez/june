@@ -1,12 +1,50 @@
 import std.Sys;
+import std.os.Win32;
 
 File :: record {
 	
 	path:  c8*;
-	flags: u32;
 
-	File(path: c8*, flags: u32) {
+	File(path: c8*) {
 		this.path  = path;
-		this.flags = flags;
+	}
+
+	/*
+	 * Checks if the file exist in the
+	 * system.
+	 */
+	exist() -> bool {
+#if OS_WINDOWS
+		attrs: u32 = Win32.GetFileAttributesA(path);
+		return attrs != Win32.INVALID_FILE_ATTRIBUTES;
+#elif OS_UNIX
+		return false; // TODO
+#endif
+	}
+
+	/*
+	 * checks if the file is a directory.
+	 * Returns false if it does not exist.
+	 */
+	isDirectory() -> bool {
+#if OS_WINDOWS
+		attrs: u32 = Win32.GetFileAttributesA(path);
+		return (attrs != Win32.INVALID_FILE_ATTRIBUTES) &&
+		       (attrs & Win32.FILE_ATTRIBUTE_DIRECTORY) != 0;
+#elif OS_UNIX
+		return false; // TODO
+#endif
+	}
+
+	/*
+	 * Creates the directory if it does
+	 * not already exist.
+	 */
+	mkDir() -> bool {
+#if OS_WINDOWS
+		return Win32.CreateDirectoryA(path, null);
+#elif OS_UNIX
+		return false; // TODO
+#endif
 	}
 }

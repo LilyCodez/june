@@ -1669,7 +1669,7 @@ YIELD_ERROR(BinOp)
 		bool IsBool = RTy->is(Context.BoolType);
 		if (IsBool) {
 			if (LTy->isNot(Context.BoolType)) {
-				Error(BinOp, "Both sides of the operator '%' must be a booleans or ints",
+				Error(BinOp, "Both sides of the operator '%s' must be a booleans or ints",
 					GetTokenKindPresentation(BinOp->Op, Context));
 				YIELD_ERROR(BinOp);
 			}
@@ -1786,7 +1786,7 @@ YIELD_ERROR(UOP)
 		}
 
 		if (UOP->Val->IsComptimeCompat) {
-			Error(UOP, "Operator '%' requries the value to be modifiable",
+			Error(UOP, "Operator '%s' requries the value to be modifiable",
 				GetTokenKindPresentation(UOP->Op, Context));
 			YIELD_ERROR(UOP);
 		}

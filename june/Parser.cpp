@@ -421,19 +421,26 @@ june::FuncDecl* june::Parser::ParseFuncDecl(Token NameTok, mods::Mod Mods, llvm:
 	POP_SCOPE();
 
 	if (!Func->is(AstKind::ERROR) && Name == Context.MainIdentifier) {
-		if (!(Func->Mods & mods::NATIVE)) {
-			if (!(Func->RetTy->is(Context.I32Type) || Func->RetTy->is(Context.VoidType))) {
-				Error(Func->Loc, "The 'main' function must return either type 'i32' or 'void'");
-				Log.Note("Declare main as: 'main()' or 'main() -> i32'").EndNote();
-			}
+		Type* C8PtrPtrTy = Context.GetCachedPointerType(Context.GetCachedPointerType(Context.C8Type));
+		if (Func->Params.empty() ||
+			(Func->Params.size() == 2
+				&& Func->Params[0]->Ty->is(Context.I32Type)
+				&& Func->Params[1]->Ty->is(C8PtrPtrTy)
+			)) {
+			if (!(Func->Mods & mods::NATIVE)) {
+				if (!(Func->RetTy->is(Context.I32Type) || Func->RetTy->is(Context.VoidType))) {
+					Error(Func->Loc, "The 'main' function must return either type 'i32' or 'void'");
+					Log.Note("Declare main as: 'main()' or 'main() -> i32'").EndNote();
+				}
 
-			Func->IsMainFunc = true;
-			if (!Context.MainEntryFunc) {
-				Context.MainEntryFunc = Func;
-			} else {
-				// duplicate entry function
-				Error(Func->Loc, "Duplicate entry point found. First declared at: %s:%s",
-					Context.MainEntryFunc->FU->FL.PathKey, Context.MainEntryFunc->Loc.LineNumber);
+				Func->IsMainFunc = true;
+				if (!Context.MainEntryFunc) {
+					Context.MainEntryFunc = Func;
+				} else {
+					// duplicate entry function
+					Error(Func->Loc, "Duplicate entry point found. First declared at: %s:%s",
+						Context.MainEntryFunc->FU->FL.PathKey, Context.MainEntryFunc->Loc.LineNumber);
+				}
 			}
 		}
 	}

@@ -181,6 +181,9 @@ void june::JuneContext::Init(bool EmitDebugInfo) {
 			ItrElmTy = PtrTy;
 		}
 	};
+	CreatePointersForCache(C8Type);
+	CreatePointersForCache(C16Type);
+	CreatePointersForCache(C32Type);
 	CreatePointersForCache(I8Type);
 	CreatePointersForCache(I16Type);
 	CreatePointersForCache(I32Type);

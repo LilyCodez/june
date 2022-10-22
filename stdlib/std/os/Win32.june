@@ -53,6 +53,16 @@ native SetStdHandle(nStdHandle: u32, hHandle: void*) -> i32;
  *                                              *
 \*===----------------------------------------===*/
 
+comptime CREATE_NEW        := 1;
+comptime CREATE_ALWAYS     := 2;
+comptime OPEN_EXISTING     := 3;
+comptime OPEN_ALWAYS       := 4;
+comptime TRUNCATE_EXISTING := 5;
+
+comptime INVALID_FILE_SIZE        := cast(u32) 0xFFFFFFFF;
+comptime INVALID_SET_FILE_POINTER := cast(u32) -1;
+comptime INVALID_FILE_ATTRIBUTES  := cast(u32) -1;
+
 native WriteFile(hFile:                  void*,
                  lpBuffer:               void*,
                  nNumberOfBytesToWrite:  u32,
@@ -76,11 +86,11 @@ native CreateFileA(lpFileName:            c8*,
                    hTemplateFile:         void*
                    ) -> void*;
 
-comptime CREATE_NEW        := 1;
-comptime CREATE_ALWAYS     := 2;
-comptime OPEN_EXISTING     := 3;
-comptime OPEN_ALWAYS       := 4;
-comptime TRUNCATE_EXISTING := 5;
+native GetFileAttributesA(lpFileName: c8*) -> u32;
+
+native CreateDirectoryA(lpPathName:           c8*,
+                        lpSecurityAttributes: void* // TODO: Support security attributes?
+                        ) -> bool;
 
 /*===----------------------------------------===*\
  *                                              *

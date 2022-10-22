@@ -70,36 +70,40 @@ InStream :: record {
 	}
 }
 
-open(file :File) -> (InStream, Err) {
+open(file: File, flags: u32) -> (InStream, Err) {
+	return open(file.path, flags);
+}
+
+open(path: c8*, flags: u32) -> (InStream, Err) {
 
 #if OS_WINDOWS	
 		accessFlags := 0u;
 		shareFlags  := 0u;
 		createFlags := 0u;
 		
-		if file.flags == 0 {
+		if flags == 0 {
 			accessFlags = Win32.GENERIC_ALL;
 		}
 		
-		if (file.flags & FileFlags.IN) != 0 {
+		if (flags & FileFlags.IN) != 0 {
 			accessFlags |= Win32.GENERIC_READ;
 		}
 		
-		if (file.flags & FileFlags.OUT) != 0 {
+		if (flags & FileFlags.OUT) != 0 {
 			accessFlags |= Win32.GENERIC_WRITE;
 		}
 		
-		if (file.flags & FileFlags.SHARE) != 0 {
+		if (flags & FileFlags.SHARE) != 0 {
 			shareFlags |= Win32.FILE_SHARE_READ;
 		}
 		
-		if (file.flags & FileFlags.CREATE) != 0 {
+		if (flags & FileFlags.CREATE) != 0 {
 			createFlags |= Win32.CREATE_NEW;
 		} else {
 			createFlags |= Win32.OPEN_EXISTING;
 		}
 		
-		handle := Win32.CreateFileA(file.path,
+		handle := Win32.CreateFileA(path,
 		                            accessFlags,
 								    shareFlags,
 								    null,
