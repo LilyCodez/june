@@ -296,8 +296,9 @@ namespace june {
 	struct IfStmt : AstNode {
 
 		Expr*      Cond;
-		AstNode*   Else = nullptr; // 'else' of 'else if'
-		LexScope   Scope;
+		SourceLoc  ExpandedCondLoc; // Location that spans the entire expression.
+		AstNode*    Else = nullptr; // 'else' of 'else if'
+		LexScope    Scope;
 
 		IfStmt() : AstNode(AstKind::IF) {}
 
@@ -308,6 +309,7 @@ namespace june {
 
 		VarDecl*   Decl = nullptr;
 		Expr*      Cond = nullptr;
+		SourceLoc  ExpandedCondLoc; // Location that spans the entire expression.
 		Expr*      Inc  = nullptr;
 		LexScope   Scope;
 
@@ -330,6 +332,7 @@ namespace june {
 	struct PredicateLoopStmt : AstNode {
 
 		Expr*      Cond = nullptr;
+		SourceLoc  ExpandedCondLoc; // Location that spans the entire expression.
 		LexScope   Scope;
 
 		PredicateLoopStmt() : AstNode(AstKind::PREDICATE_LOOP) {}
@@ -616,9 +619,10 @@ namespace june {
 
 	struct TernaryCond : Expr {
 
-		Expr* Cond;
-		Expr* Val1;
-		Expr* Val2;
+		Expr*     Cond;
+		SourceLoc ExpandedCondLoc; // Location that spans the entire expression.
+		Expr*     Val1;
+		Expr*     Val2;
 
 		TernaryCond()
 			: Expr(AstKind::TERNARY_COND) {}

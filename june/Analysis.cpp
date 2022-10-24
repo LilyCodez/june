@@ -526,12 +526,7 @@ void june::Analysis::CheckRangeLoop(RangeLoopStmt* Loop) {
 		CheckNode(Loop->Decl);	
 	}
 	if (Loop->Cond) {
-		CheckNode(Loop->Cond);
-		if (Loop->Cond->Ty->isNot(Context.ErrorType)) {
-			if (!IsComparable(Loop->Cond->Ty)) {
-				Error(Loop->Cond, "Loop condition expected to be a boolean");
-			}
-		}
+		CheckCond(Loop->Cond, Loop->ExpandedCondLoc, "Loop");
 	}
 	if (Loop->Inc) {
 		CheckNode(Loop->Inc);
@@ -562,12 +557,7 @@ void june::Analysis::CheckIteratorLoop(IteratorLoopStmt* Loop) {
 
 void june::Analysis::CheckPredicateLoop(PredicateLoopStmt* Loop) {
 	if (Loop->Cond) {
-		CheckNode(Loop->Cond);
-		if (Loop->Cond->Ty->isNot(Context.ErrorType)) {
-			if (!IsComparable(Loop->Cond->Ty)) {
-				Error(Loop->Cond, "Loop condition expected to be a boolean");
-			}
-		}
+		CheckCond(Loop->Cond, Loop->ExpandedCondLoc, "Loop");
 	}
 	
 	++LoopDepth;
@@ -577,12 +567,7 @@ void june::Analysis::CheckPredicateLoop(PredicateLoopStmt* Loop) {
 }
 
 bool june::Analysis::CheckIf(IfStmt* If) {
-	CheckNode(If->Cond);
-	if (If->Cond->Ty->isNot(Context.ErrorType)) {
-		if (!IsComparable(If->Cond->Ty)) {
-			Error(If->Cond, "If condition expected to be a boolean");
-		}
-	}
+	CheckCond(If->Cond, If->ExpandedCondLoc, "If");
 
 	Scope IfBodyScope(If);
 	CheckScope(If->Scope, IfBodyScope);
@@ -601,6 +586,16 @@ bool june::Analysis::CheckIf(IfStmt* If) {
 	LocScope->FoundTerminal |= AllPathsReturn;
 
 	return AllPathsReturn;
+}
+
+void june::Analysis::CheckCond(Expr* Cond, const SourceLoc& ExpandedCondLoc, const c8* PreText) {
+	CheckNode(Cond);
+	if (Cond->Ty->isNot(Context.ErrorType)) {
+		if (!IsComparable(Cond->Ty)) {
+			Log.Error(ExpandedCondLoc,
+				"%s condition expected to be type 'bool', but found type '%s'", PreText, Cond->Ty->ToStr());
+		}
+	}
 }
 
 void june::Analysis::CheckLoopControl(LoopControlStmt* LoopControl) {
@@ -1997,9 +1992,7 @@ void june::Analysis::CheckTernaryCond(TernaryCond* Ternary) {
 	CheckNode(Ternary->Cond);
 	YIELD_ERROR_WHEN_M(Ternary, Ternary->Cond);
 
-	if (!IsComparable(Ternary->Cond->Ty)) {
-		Error(Ternary->Cond, "Expected boolean type for Conditional operator '?'");
-	}
+	CheckCond(Ternary->Cond, Ternary->ExpandedCondLoc, "Operator '?'");
 
 	CheckNode(Ternary->Val1);
 	CheckNode(Ternary->Val2);

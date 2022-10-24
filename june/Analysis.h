@@ -74,6 +74,8 @@ namespace june {
 		void CheckIteratorLoop(IteratorLoopStmt* Loop);
 		void CheckPredicateLoop(PredicateLoopStmt* Loop);
 		bool CheckIf(IfStmt* If);
+		void CheckCond(Expr* Cond, const SourceLoc& ExpandedCondLoc, const c8* PreText);
+
 		void CheckLoopControl(LoopControlStmt* LoopControl);
 		void CheckIdentRef(IdentRef* IRef, bool GivePrefToFuncs);
 		void CheckIdentRefCommon(IdentRef* IRef, bool GivePrefToFuncs, FileUnit* FUToLookup, RecordDecl* RecordToLookup);

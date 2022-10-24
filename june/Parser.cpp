@@ -5,6 +5,8 @@
 #include <assert.h>
 
 #include "Types.h"
+#include "Util.h"
+
 #include "JuneContext.h"
 #include <llvm/IR/Module.h>
 
@@ -44,6 +46,13 @@ LocScope = &NewScope;
 
 #define POP_SCOPE() \
 LocScope = LocScope->Parent;
+
+#define EXPANDED_SOURCE_START SourceLoc ExpandedStartLoc = CTok.Loc;
+#define EXPANDED_SOURCE_END(Node)                               \
+Node->ExpandedCondLoc.LineNumber = ExpandedStartLoc.LineNumber; \
+Node->ExpandedCondLoc.Text =                                    \
+	llvm::StringRef(ExpandedStartLoc.Text.begin(),              \
+                    PrevToken.GetText().end() - ExpandedStartLoc.Text.begin());
 
 june::Parser::Parser(JuneContext& context, FileUnit* FU, Logger& log)
 	: Context(context), L(context, FU->SBuf, log), FU(FU), Log(log) {
@@ -106,7 +115,7 @@ void june::Parser::ParseImport() {
 	NextToken(); // Consuming 'import' token
 
 	bool MoreDots = false;
-	std::string FilePath = "";
+	std::string PathKey = "";
 	Identifier LastKey;
 	do {
 		Identifier IdentKey = ParseIdentifier("Expected identifier for import path");
@@ -116,11 +125,11 @@ void june::Parser::ParseImport() {
 		}
 		LastKey = IdentKey;
 
-		if (!FilePath.empty()) {
-			FilePath += ".";
+		if (!PathKey.empty()) {
+			PathKey += ".";
 		}
 
-		FilePath += IdentKey.Text.str();
+		PathKey += IdentKey.Text.str();
 
 		MoreDots = CTok.is('.');
 		if (MoreDots) {
@@ -149,17 +158,17 @@ void june::Parser::ParseImport() {
 	Match(';');
 
 	if (!GlobalUsingImport && FU->Imports.find(LastKey) != FU->Imports.end()) {
-		Error(ImportTk, "Duplicate import", FilePath);
+		Error(ImportTk, "Duplicate import", PathKey);
 		return;
 	}
 
-	auto it = Context.FileUnits.find(FilePath);
+	auto it = Context.FileUnits.find(PathKey);
 	if (it != Context.FileUnits.end()) {
 		if (GlobalUsingImport) {
 			auto findIt = std::find(FU->GlobalUsingImports.begin(),
 				                    FU->GlobalUsingImports.end(), it->second);
 			if (findIt != FU->GlobalUsingImports.end()) {
-				Error(ImportTk, "Duplicate global import", FilePath);
+				Error(ImportTk, "Duplicate global import", PathKey);
 				return;
 			}
 			FU->GlobalUsingImports.push_back(it->second);
@@ -167,7 +176,42 @@ void june::Parser::ParseImport() {
 			FU->Imports.insert({ LastKey, it->second });
 		}
 	} else {
-		Error(ImportTk, "Failed to find import for path key '%s'", FilePath);
+		Error(ImportTk, "Failed to find import for path key '%s'", PathKey);
+
+		// See if the user forgot to capitalize the first letter.
+		std::string LastKeyModified = LastKey.Text.str();
+		std::string ModifiedPathKey;
+		if (!LastKeyModified.empty()) {
+			if (std::islower(LastKeyModified[0])) {
+				LastKeyModified[0] = std::toupper(LastKeyModified[0]);
+				auto it = PathKey.find_last_of('.');
+				if (it != std::string::npos) {
+					ModifiedPathKey = PathKey.substr(0, it + 1); // +1 to consume the .
+					ModifiedPathKey += LastKeyModified;
+				}
+				else {
+					ModifiedPathKey = LastKeyModified;
+				}
+
+				std::string DidYouMeanToStr = "Did you mean to import: ";
+				std::string InsteadOfStr = " instead of ";
+				std::string Spaces =
+					std::string(DidYouMeanToStr.size() + 2 + ModifiedPathKey.size() + InsteadOfStr.size() + 1 , ' ');
+				auto it2 = Context.FileUnits.find(ModifiedPathKey);
+				if (it2 != Context.FileUnits.end()) {
+					Log.Note("%s'%s'%s'%s'",
+								DidYouMeanToStr,
+								ModifiedPathKey,
+								InsteadOfStr,		
+								PathKey);
+					SetTerminalColor(TerminalColorRed);
+					Log.NoteLn("%s~", Spaces);
+					SetTerminalColor(TerminalColorDefault);
+					Log.EndNote();
+					return;
+				}
+			}
+		}
 	}
 }
 
@@ -741,7 +785,9 @@ june::RangeLoopStmt* june::Parser::ParseRangeLoop(Token LoopTok) {
 	Match(';');
 
 	if (CTok.isNot(';')) {
+		EXPANDED_SOURCE_START;
 		Loop->Cond = ParseExpr();
+		EXPANDED_SOURCE_END(Loop);
 	}
 	Match(';');
 
@@ -759,7 +805,9 @@ june::RangeLoopStmt* june::Parser::ParseRangeLoop(Token LoopTok) {
 june::PredicateLoopStmt* june::Parser::ParsePredicateLoop(Token LoopTok) {
 	PredicateLoopStmt* Loop = NewNode<PredicateLoopStmt>(LoopTok);
 	if (CTok.isNot('{')) {
+		EXPANDED_SOURCE_START;
 		Loop->Cond = ParseExpr();
+		EXPANDED_SOURCE_END(Loop);
 	}
 
 	PUSH_SCOPE();
@@ -797,8 +845,10 @@ june::IfStmt* june::Parser::ParseIf() {
 
 	// TODO: Later allow for variable
 	//       declarations inside of if statements
+	EXPANDED_SOURCE_START;
 	If->Cond = ParseExpr();
-
+	EXPANDED_SOURCE_END(If);
+	
 	PUSH_SCOPE();
 	ParseScopeStmts(If->Scope);
 	POP_SCOPE();
@@ -861,10 +911,12 @@ june::Expr* june::Parser::ParseAssignmentAndExprs() {
 }
 
 june::Expr* june::Parser::ParseExpr() {
+	EXPANDED_SOURCE_START
 	Expr* E = ParseBinaryOpExpr(ParsePrimaryAndPostExpr());
 	if (CTok.is('?')) {
 		TernaryCond* Ternary = NewNode<TernaryCond>(CTok);
 		Ternary->Cond = E;
+		EXPANDED_SOURCE_END(Ternary);
 		NextToken(); // Consuming '?' token
 		Ternary->Val1 = ParseExpr();
 		if (Ternary->Val1->is(AstKind::ERROR)) {
