@@ -1,0 +1,17 @@
+import Tests;
+
+A :: record {
+	~A() {
+		Tests.print("Destroyed!");
+	}
+}
+
+f() -> A {
+	a: A;
+	return a;
+}
+
+main() {
+	a := f();
+	Tests.print("Begin ");
+}

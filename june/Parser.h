@@ -69,7 +69,7 @@ namespace june {
 		void ParseOptStmt(AstNode*& Stmt);
 		AstNode* ParseStmt();
 
-		FuncDecl* ParseFuncDecl(Token NameTok, mods::Mod Mods, llvm::SmallVector<Identifier>& Generics);
+		FuncDecl* ParseFuncDecl(Token NameTok, mods::Mod Mods, llvm::SmallVector<Identifier>& Generics, bool IsDestructor = false);
 		VarDecl* ParseVarDecl(mods::Mod Mods);
 		VarDecl* ParseVarDecl(Token NameTok, mods::Mod Mods, bool ParseTypeInfo = true);
 		RecordDecl* ParseRecordDecl(Token NameTok, mods::Mod Mods);

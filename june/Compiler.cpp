@@ -165,7 +165,7 @@ void june::Compiler::Compile(llvm::SmallVector<const c8*, 1>& SourceDirectories)
 			continue;
 		}
 
-		Analysis A(Context, D->FU->Log);
+		Analysis A(Context, D->FU->Log, true);
 		if (D->is(AstKind::FUNC_DECL)) {
 			A.CheckFuncDecl(ocast<FuncDecl*>(D));
 		} else if (D->is(AstKind::GENERIC_FUNC_DECL)) {
@@ -204,11 +204,13 @@ void june::Compiler::Compile(llvm::SmallVector<const c8*, 1>& SourceDirectories)
 			continue;
 		} 
 
-		Analysis A(Context, D->FU->Log);
+		Analysis A(Context, D->FU->Log, false);
 		if (D->is(AstKind::FUNC_DECL)) {
 			A.CheckFuncDecl(ocast<FuncDecl*>(D));
 		} else if (D->is(AstKind::VAR_DECL)) {
 			A.CheckVarDecl(ocast<VarDecl*>(D));
+		} else if (D->is(AstKind::VAR_DECL_LIST)) {
+			A.CheckVarDeclList(ocast<VarDeclList*>(D));
 		} else {
 			assert(!"Failed to implement check");
 		}
@@ -224,6 +226,7 @@ void june::Compiler::Compile(llvm::SmallVector<const c8*, 1>& SourceDirectories)
 
 	IRGen Gen(Context, EmitDebugInfo, DisplayLLVMIR | Verbose);
 	Gen.GenGlobalInitFunc();
+	Gen.GenGlobalDestroyFunc();
 
 	if (EmitDebugInfo) {
 		Context.LLJuneModule.addModuleFlag(llvm::Module::Warning, "CodeView", 1);

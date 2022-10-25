@@ -1,0 +1,15 @@
+import Tests;
+
+A :: record {
+	~A() {
+		Tests.print("Destroyed!");
+	}
+}
+
+main() {
+	Tests.print("Begin ");
+	{
+		a: A;	
+	}
+	Tests.print(" End");
+}

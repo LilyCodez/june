@@ -127,6 +127,7 @@ restartLex:
 	case '!':
 		if (*CurPtr == '=') return CreateTokenAndEat(TokenKind::EXL_EQ, TokStart);
 		else                return CreateToken('!', TokStart);
+	case '~': return CreateToken('~', TokStart);
 	case '/':
 		if (*CurPtr == '/') {
 			EatTillEndOfLine();

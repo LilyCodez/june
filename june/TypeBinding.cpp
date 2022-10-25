@@ -107,7 +107,7 @@ namespace june {
 		}
 		case AstKind::VAR_DECL_LIST: {
 			VarDeclList* DeclList = ocast<VarDeclList*>(Node);
-			DeclList->AlreadyGenerated = false;
+			DeclList->GenRequestedAlready = false;
 			DeclList->HasBeenChecked = false;
 			for (VarDecl* Var : DeclList->Decls) {
 				ResetNode(Var);

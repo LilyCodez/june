@@ -22,7 +22,7 @@ void june::ComptimeGen::ComputeArrayDimSize(ComptimeValue& CV) {
 
 	FixedArrayType* AT = reinterpret_cast<FixedArrayType*>(CV.Payload);
 
-	Analysis A(Context, CV.Log);
+	Analysis A(Context, CV.Log, true);
 	A.CheckNode(AT->LengthAsExpr);
 
 	if (CV.Log.HasError) {

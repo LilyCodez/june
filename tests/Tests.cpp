@@ -83,7 +83,7 @@ void RunPlayground() {
 	SourceDirectories.push_back(SRC("playground"));
 
 	june::Compiler Compiler;
-	Compiler.StandAlone = true;
+	//Compiler.StandAlone = true;
 	Compiler.PathToStandardLibrary = JUNE_COMPILER_STDLIB_SOURCE_DIR;
 	//Compiler.EmitDebugInfo = true;
 	//Compiler.Verbose = true;
@@ -187,6 +187,20 @@ int main() {
 	RunTest(SRC("tuples/Tuples7.june"), "0 0 0 14");
 	RunTest(SRC("tuples/Tuples9.june"), "1111 2222");
 	RunTest(SRC("othertests/PointerArithmetic.june"), "llo world! o world! llo world! rld!");
+	RunTest(SRC("destructors/Destructors1.june"), "Begin Destroyed!");
+	RunTest(SRC("destructors/Destructors2.june"), "Begin Destroyed!");
+	RunTest(SRC("destructors/Destructors3.june"), "Begin Destroyed!");
+	RunTest(SRC("destructors/Destructors4.june"), "Begin Destroyed!");
+	RunTest(SRC("destructors/Destructors5.june"), "Begin Destroyed!");
+	RunTest(SRC("destructors/Destructors6.june"), "Begin Destroyed! End");
+	RunTest(SRC("destructors/Destructors7.june"), "Begin Destroyed! Destroyed! Destroyed! Destroyed! Destroyed! ");
+	RunTest(SRC("destructors/Destructors8.june"), "Begin Destroyed!");
+	RunTest(SRC("destructors/Destructors9.june"), "Begin Destroyed! Destroyed! Destroyed! Destroyed! Destroyed! ");
+	RunTest(SRC("destructors/Destructors10.june"), "Begin Destroyed!");
+	RunTest(SRC("destructors/Destructors11.june"), "Begin Destroyed!");
+	RunTest(SRC("destructors/Destructors12.june"), "Begin Destroyed!");
+	RunTest(SRC("destructors/Destructors13.june"), "Begin Destroyed!");
+	RunTest(SRC("destructors/Destructors14.june"), "Begin Destroyed(77) endof f() call Destroyed(55)");
 
 	if (Succeeded + Failed > 0) {
 		llvm::outs() << "Passed/Tested (" << Succeeded << "/" << (Succeeded + Failed) << ")\n";

@@ -12,7 +12,7 @@ namespace june {
 	class Analysis {
 	public:
 
-		explicit Analysis(JuneContext& context, Logger& log);
+		explicit Analysis(JuneContext& context, Logger& log, bool forCodeGen);
 
 		static void ResolveRecordTypes(JuneContext& Context, FileUnit* FU);
 
@@ -24,6 +24,8 @@ namespace june {
 		void CheckGenericFuncDecl(GenericFuncDecl* GenFunc, u32 BindingId);
 
 		void CheckVarDecl(VarDecl* Var);
+
+		void CheckVarDeclList(VarDeclList* DeclList);
 
 		void CheckRecordDecl(RecordDecl* Record);
 
@@ -39,6 +41,10 @@ namespace june {
 		RecordDecl* CRecord = nullptr;
 		VarDecl*    CField  = nullptr;
 		VarDecl*    CGlobal = nullptr;
+
+		// True if checking stuff that will be used
+		// for code generation
+		bool ForCodeGen = false;
 
 		struct Scope {
 			Scope* Parent = nullptr;
@@ -63,12 +69,14 @@ namespace june {
 		// and decremented when existed
 		u32 LoopDepth = 0;
 
+		bool TypeHasFieldsWithAssignment(Type* Ty);
+		void CheckRecordsInType(SourceLoc ErrLoc, Type* Ty);
+		
 		bool CheckInferedTypeAssignment(AstNode* Decl, Expr* Assignment);
 
 		void CheckScope(const LexScope& LScope, Scope& NewScope);
 	
 		bool CheckInnerScope(InnerScopeStmt* InnerScope);
-		void CheckVarDeclList(VarDeclList* DeclList);
 		void CheckReturn(ReturnStmt* Ret);
 		void CheckRangeLoop(RangeLoopStmt* Loop);
 		void CheckIteratorLoop(IteratorLoopStmt* Loop);
@@ -117,6 +125,9 @@ namespace june {
 		void DisplayCircularDep(Decl* StartDep);
 
 		RecordType* GetRecordType(RecordDecl* Record);
+
+		bool RequestRecordDestructionGen(RecordDecl* Record);
+		bool TypeNeedsDestructionAndGenDestructors(Type* Ty);
 	
 		void Error(AstNode* N, const c8* Msg) {
 			Log.Error(N->Loc, Msg);

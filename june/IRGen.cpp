@@ -79,7 +79,13 @@ llvm::raw_ostream& operator<<(llvm::raw_ostream& OS, LLTypePrinter& Printer) {
 
 
 
+#define PUSH_SCOPE()        \
+Scope NewScope;             \
+NewScope.Parent = LocScope; \
+LocScope = &NewScope;
 
+#define POP_SCOPE() \
+LocScope = LocScope->Parent;
 
 june::IRGen::IRGen(JuneContext& context, bool emitDebugInfo, bool displayLLVMIR)
 	: Context(context),
@@ -282,6 +288,11 @@ void june::IRGen::GenGlobalVar(VarDecl* Global) {
 		return;
 	}
 
+	if (Global->ParentDeclList) {
+		GenGlobalVarDeclList(Global->ParentDeclList);
+		return;
+	}
+
 	GenGlobalVarDecl(Global);
 
 	if (Global->Mods & mods::Mods::NATIVE) {
@@ -292,9 +303,8 @@ void june::IRGen::GenGlobalVar(VarDecl* Global) {
 		return; // Global variables do not get initialized.
 	}
 
-	if (Global->ParentDeclList) {
-		GenGlobalVarDeclList(Global->ParentDeclList);
-		return;
+	if (TypeNeedsDestruction(Global->Ty)) {
+		Context.GlobalsNeedingDestruction.push_back(Global);
 	}
 
 	llvm::GlobalVariable* LLGVar =
@@ -330,9 +340,9 @@ void june::IRGen::GenFuncDecl(FuncDecl* Func) {
 		}
 	}
 
-	bool RVO = FuncNeedsRVO(Func);
+	bool RetViaRef = FuncNeedsRetViaRef(Func);
 
-	llvm::Type* LLRetTy = RVO              ? llvm::Type::getVoidTy(LLContext) :
+	llvm::Type* LLRetTy = RetViaRef        ? llvm::Type::getVoidTy(LLContext) :
                           Func->IsMainFunc ? llvm::Type::getInt32Ty(LLContext)
 		                                   : GenType(Func->RetTy);
 
@@ -346,7 +356,7 @@ void june::IRGen::GenFuncDecl(FuncDecl* Func) {
 		LLParamTypes.push_back(llvm::PointerType::get(GenRecordType(Context, Func->Record), 0));
 	}
 
-	if (RVO) {
+	if (RetViaRef) {
 		// Instead of returning the structure we pass a reference
 		// into the function of the structure and return void.
 		if (Func->RetTy->GetKind() == TypeKind::RECORD) {
@@ -375,7 +385,7 @@ void june::IRGen::GenFuncDecl(FuncDecl* Func) {
 	// TODO: Create an abstract name mangler then
 	// name mangle based on the mangler
 
-	std::string LLFuncName = std::string(Func->Name.Text);
+	std::string LLFuncName  = std::string(Func->Name.Text);
 	if (!(Func->Mods & mods::Mods::NATIVE) && !Func->IsMainFunc) {
 		// Adding .june to prevent conflicts with external dependencies.
 		LLFuncName += ".june";
@@ -419,8 +429,8 @@ void june::IRGen::GenFuncBody(FuncDecl* Func) {
 
 	LLFunc = Func->LLAddress;
 	
-	bool RVO = FuncNeedsRVO(Func);
-	bool HasVoidRetTy = Func->RetTy->GetKind() == TypeKind::VOID && !Func->IsMainFunc || RVO;
+	bool ReturnViaRef = FuncNeedsRetViaRef(Func);
+	bool HasVoidRetTy = Func->RetTy->GetKind() == TypeKind::VOID && !Func->IsMainFunc || ReturnViaRef;
 
 	// Entry block for the function.
 	llvm::BasicBlock* LLEntryBlock = llvm::BasicBlock::Create(LLContext, "entry.block", LLFunc);
@@ -442,6 +452,7 @@ void june::IRGen::GenFuncBody(FuncDecl* Func) {
 	}
 	
 	// Allocating space for the variables
+	PUSH_SCOPE();
 	for (VarDecl* Var : Func->AllocVars) {	
 		if (!(Var->Mods & mods::Mods::COMPTIME)) {
 			GenAlloca(Var);
@@ -457,7 +468,7 @@ void june::IRGen::GenFuncBody(FuncDecl* Func) {
 		LLThis = CreateLoad(LLThisAddr, "this");
 	}
 
-	if (RVO) {
+	if (ReturnViaRef) {
 		++LLParamIndex;
 	}
 	
@@ -470,7 +481,7 @@ void june::IRGen::GenFuncBody(FuncDecl* Func) {
 	// If it is a constructor the fields need to be initialized early
 	if (Func->Record && Func->Name == Func->Record->Name) {
 		if (Func->Record->FieldsHaveAssignment) {
-			GenDefaultRecordInitCall(Func->Record, LLThis);
+			GenDefaultRecordConstructorCall(Func->Record, LLThis);
 		} else {
 			llvm::Type* LLRecType = GenRecordType(Context, Func->Record);
 			Builder.CreateStore(llvm::ConstantAggregateZero::get(LLRecType), LLThis);
@@ -490,6 +501,11 @@ void june::IRGen::GenFuncBody(FuncDecl* Func) {
 	ScopeStmts& Stmts = Func->Scope.Stmts;
  	for (AstNode* Node : Stmts) {
 		GenNode(Node);
+	}
+
+	if (Func->IsMainFunc) {
+		Context.JuneDestroyGlobalsFunc = GenGlobalDestroyFuncDecl();
+		Builder.CreateCall(Context.JuneDestroyGlobalsFunc);
 	}
 
 	if (Func->NumReturns > 1) {
@@ -513,6 +529,7 @@ void june::IRGen::GenFuncBody(FuncDecl* Func) {
 			LLRet = Builder.CreateRet(CreateLoad(LLRetAddr));
 		}
 	} else if (Func->NumReturns == 0) {
+		CallDestructorsForRet();
 		if (HasVoidRetTy) {
 			LLRet = Builder.CreateRetVoid();
 		} else if (Func->IsMainFunc &&
@@ -526,6 +543,7 @@ void june::IRGen::GenFuncBody(FuncDecl* Func) {
 			GetDIEmitter(Func)->EmitDebugLocation(LLRet, Func->Scope.EndLoc);
 		GetDIEmitter(Func)->EmitFuncEnd(Func);
 	}
+	POP_SCOPE();
 }
 
 void june::IRGen::GenGlobalVarDecl(VarDecl* Global) {
@@ -562,6 +580,11 @@ llvm::Value* june::IRGen::GenLocalVarDecl(VarDecl* Var) {
 		return nullptr;
 	} else {
 		assert(Var->LLAddress && "The address should have been generated at the start of the function!");
+		
+		if (TypeNeedsDestruction(Var->Ty)) {
+			AddObjectToDestroy(Var->Ty, Var->LLAddress);
+		}
+		
 		if (EmitDebugInfo)
 			GetDIEmitter(Var)->EmitLocalVar(Var, Builder);
 		return GenVarDeclAssignment(GetAddressOfVar(Var), Var);
@@ -569,6 +592,12 @@ llvm::Value* june::IRGen::GenLocalVarDecl(VarDecl* Var) {
 }
 
 llvm::Value* june::IRGen::GenLocalvarDeclList(VarDeclList* DeclList) {
+
+	for (VarDecl* Var : DeclList->Decls) {
+		if (TypeNeedsDestruction(Var->Ty)) {
+			AddObjectToDestroy(Var->Ty, Var->LLAddress);
+		}
+	}
 
 	if (DeclList->Assignment) {
 		if (DeclList->Assignment->is(AstKind::TUPLE)) {
@@ -716,6 +745,23 @@ void june::IRGen::GenGlobalInitFunc() {
 	}
 }
 
+void june::IRGen::GenGlobalDestroyFunc() {
+	llvm::BasicBlock* LLEntryBlock = llvm::BasicBlock::Create(LLContext, "entry.block", Context.JuneDestroyGlobalsFunc);
+
+	Builder.SetInsertPoint(LLEntryBlock);
+
+	for (VarDecl* Global : Context.GlobalsNeedingDestruction) {
+		CallDestructors(Global->Ty, Global->LLAddress);
+	}
+
+	Builder.CreateRetVoid();
+
+	if (DisplayLLVMIR) {
+		Context.JuneDestroyGlobalsFunc->print(llvm::outs());
+		llvm::outs() << '\n';
+	}
+}
+
 llvm::Function* june::IRGen::GenGlobalInitFuncDecl() {
 	llvm::FunctionType* LLFuncType =
 		llvm::FunctionType::get(llvm::Type::getVoidTy(LLContext), false);
@@ -724,6 +770,19 @@ llvm::Function* june::IRGen::GenGlobalInitFuncDecl() {
 			LLFuncType,
 			llvm::Function::ExternalLinkage,
 			"__june.init.globals",
+			LLModule
+		);
+	return LLInitFunc;
+}
+
+llvm::Function* june::IRGen::GenGlobalDestroyFuncDecl() {
+	llvm::FunctionType* LLFuncType =
+		llvm::FunctionType::get(llvm::Type::getVoidTy(LLContext), false);
+	llvm::Function* LLInitFunc =
+		llvm::Function::Create(
+			LLFuncType,
+			llvm::Function::ExternalLinkage,
+			"__june.destroy.globals",
 			LLModule
 		);
 	return LLInitFunc;
@@ -749,8 +808,15 @@ void june::IRGen::GenGlobalPostponedAssignments() {
 }
 
 void june::IRGen::GenGlobalVarDeclList(VarDeclList* DeclList) {
-	if (DeclList->AlreadyGenerated) return;
-	DeclList->AlreadyGenerated = true;
+	if (DeclList->GenRequestedAlready) return;
+	DeclList->GenRequestedAlready = true;
+
+	for (VarDecl* Global : DeclList->Decls) {
+		GenGlobalVarDecl(Global);
+		if (TypeNeedsDestruction(Global->Ty)) {
+			Context.GlobalsNeedingDestruction.push_back(Global);
+		}
+	}
 
 	if (DeclList->Assignment) {
 		// See: GenLocalvarDeclList for an explaination
@@ -834,10 +900,31 @@ bool june::IRGen::TypeNeedsRecordInit(Type* Ty) {
 	return false;
 }
 
+bool june::IRGen::TypeNeedsDestruction(Type* Ty) {
+	if (Ty->GetKind() == TypeKind::FIXED_ARRAY) {
+		Type* BaseTy = Ty->AsFixedArrayType()->GetBaseType();
+		if (BaseTy->GetKind() == TypeKind::RECORD) {
+			return BaseTy->AsRecordType()->Record->NeedsDestruction;
+		} else if (BaseTy->GetKind() == TypeKind::TUPLE) {
+			return TypeNeedsDestruction(BaseTy);
+		}
+	} else if (Ty->GetKind() == TypeKind::RECORD) {
+		return Ty->AsRecordType()->Record->NeedsDestruction;
+	} else if (Ty->GetKind() == TypeKind::TUPLE) {
+		TupleType* TupleTy = Ty->AsTupleType();
+		for (Type* ValueTy : TupleTy->SubTypes) {
+			if (TypeNeedsDestruction(ValueTy)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 llvm::Value* june::IRGen::GenRValue(AstNode* Node) {
 
-	// Dereferencing any LValues
 	llvm::Value* LLValue = GenNode(Node);
+	// Dereferencing any LValues
 	switch (Node->Kind) {
 	case AstKind::IDENT_REF:
 	case AstKind::FIELD_ACCESSOR:
@@ -864,7 +951,7 @@ llvm::Value* june::IRGen::GenRValue(AstNode* Node) {
 	case AstKind::FUNC_CALL: {
 		FuncCall* Call = ocast<FuncCall*>(Node);
 		if (Call->IsConstructorCall ||
-			(Call->CalledFunc && FuncNeedsRVO(Call->CalledFunc))) {
+			(Call->CalledFunc && FuncNeedsRetViaRef(Call->CalledFunc))) {
 			LLValue = CreateLoad(LLValue);
 		}
 		break;
@@ -896,6 +983,7 @@ llvm::Value* june::IRGen::GenRValue(AstNode* Node) {
 llvm::Value* june::IRGen::GenInnerScope(InnerScopeStmt* InnerScope) {
 	if (EmitDebugInfo)
 		GetDIEmitter()->EmitScopeStart(CFunc->FU, InnerScope->Scope.StartLoc);
+	PUSH_SCOPE();
 	GenBlock(nullptr, InnerScope->Scope);
 	if (EmitDebugInfo)
 		GetDIEmitter()->EmitScopeEnd();
@@ -903,29 +991,41 @@ llvm::Value* june::IRGen::GenInnerScope(InnerScopeStmt* InnerScope) {
 }
 
 llvm::Value* june::IRGen::GenReturn(ReturnStmt* Ret) {
-	bool RVO = FuncNeedsRVO(CFunc);
+	bool ReturnViaRef = FuncNeedsRetViaRef(CFunc);
 
 	if (CFunc->NumReturns == 1) {
-		if (Ret->Val && !RVO) {
+		if (Ret->Val && !ReturnViaRef) {
+			CallDestructorsForRet();
 			Builder.CreateRet(GenRValue(Ret->Val));
 		} else if (CFunc->IsMainFunc) {
+			CallDestructorsForRet();
 			Builder.CreateRet(GetLLInt32(0, LLContext));
-		} else if (RVO) {
-			GenStoreRVOStructRes(Ret->Val);
+		} else if (ReturnViaRef) {
+			llvm::Value* LLStructToBeAssigned = GenNode(Ret->Val);
+			CallDestructorsForRet(LLStructToBeAssigned);
+			GenStoreRetStructRes(Ret->Val, LLStructToBeAssigned);
 			Builder.CreateRetVoid();
 		} else {
+			CallDestructorsForRet();
 			Builder.CreateRetVoid();
 		}
 		EmitDebugLocation(Ret);
 		return nullptr;
 	}
 
-	if (Ret->Val && !RVO) {
+	// TODO: Come back to, calling destructors here may lead
+	//       to overbearing imagine sizes due to repeated destrucor
+	//       calls.
+	if (Ret->Val && !ReturnViaRef) {
+		CallDestructorsForRet();
 		Builder.CreateStore(GenRValue(Ret->Val), LLRetAddr);
 	} else if (CFunc->IsMainFunc) {
+		CallDestructorsForRet();
 		Builder.CreateStore(GetLLInt32(0, LLContext), LLRetAddr);
-	} else if (RVO) {
-		GenStoreRVOStructRes(Ret->Val);
+	} else if (ReturnViaRef) {
+		llvm::Value* LLStructToBeAssigned = GenNode(Ret->Val);
+		CallDestructorsForRet(LLStructToBeAssigned);
+		GenStoreRetStructRes(Ret->Val, LLStructToBeAssigned);
 	}
 	EmitDebugLocation(Ret); // storage
 	Builder.CreateBr(LLFuncEndBB);
@@ -944,6 +1044,8 @@ llvm::Value* june::IRGen::GenRangeLoop(RangeLoopStmt* Loop) {
 
 	LoopBreakStack.push_back(LLEndBB);
 	LoopContinueStack.push_back(LLContinueBB);
+
+	PUSH_SCOPE();
 
 	if (Loop->Decl) {
 		GenNode(Loop->Decl);
@@ -1026,6 +1128,7 @@ llvm::Value* june::IRGen::GenIteratorLoop(IteratorLoopStmt* Loop) {
 	Loop->VarVal->LLAddress = CreateTempAlloca(GenType(ArrTy->ElmTy));
 	Builder.CreateStore(CreateLoad(CreateLoad(LLArrItrPtrAddr)), Loop->VarVal->LLAddress);
 
+	PUSH_SCOPE();
 	GenBlock(nullptr, Loop->Scope);
 	
 	LoopBreakStack.pop_back();
@@ -1069,6 +1172,7 @@ llvm::Value* june::IRGen::GenPredicateLoop(PredicateLoopStmt* Loop) {
 	if (EmitDebugInfo)
 		GetDIEmitter()->EmitScopeStart(CFunc->FU, Loop->Scope.StartLoc);
 
+	PUSH_SCOPE();
 	GenBlock(LLBodyBB, Loop->Scope);
 	LoopBreakStack.pop_back();
 	LoopContinueStack.pop_back();
@@ -1111,6 +1215,8 @@ llvm::Value* june::IRGen::GenIf(IfStmt* If) {
 
 	GenBranchOnCond(If->Cond, LLThenBB, LLElseBB);
 	EmitDebugLocation(If);
+
+	PUSH_SCOPE();
 
 	if (EmitDebugInfo)
 		GetDIEmitter()->EmitScopeStart(CFunc->FU, If->Scope.StartLoc);
@@ -1192,7 +1298,7 @@ llvm::Value* june::IRGen::GenFieldAccessor(FieldAccessor* FA) {
 		if (FA->Site->is(AstKind::FUNC_CALL)) {
 			FuncCall* Call = ocast<FuncCall*>(FA->Site);
 			if (!Call->IsConstructorCall &&
-				!(Call->CalledFunc && FuncNeedsRVO(Call->CalledFunc)) &&
+				!(Call->CalledFunc && FuncNeedsRetViaRef(Call->CalledFunc)) &&
 				FA->Site->Ty->GetKind() == TypeKind::RECORD
 				) {
 				llvm::Value* LLTempStorage = CreateTempAlloca(LLSite->getType());
@@ -1237,6 +1343,9 @@ llvm::Value* june::IRGen::GenFuncCall(llvm::Value* LLAddr, FuncCall* Call) {
 	if (Call->IsConstructorCall && !LLAddr) {
 		// Need to create a temporary object
 		LLAddr = CreateTempAlloca(GenType(Call->Ty));
+		RecordDecl* Record = Call->Ty->AsRecordType()->Record;
+		if (Record->Destructor)
+			AddObjectToDestroy(Call->Ty, LLAddr);
 	}
 
 	if (Call->IsConstructorCall && !Call->CalledFunc) {
@@ -1272,14 +1381,14 @@ llvm::Value* june::IRGen::GenFuncCall(llvm::Value* LLAddr, FuncCall* Call) {
 	// Adding arguments
 	u32 ArgIndex = 0;
 	llvm::SmallVector<llvm::Value*, 2> LLArgs;
-	bool RVO = false;
+	bool RetViaRef = false;
 	u32 NumArgs = Call->Args.size() + Call->NamedArgs.size();
 	if (Call->CalledFunc) {
-		RVO = FuncNeedsRVO(Call->CalledFunc);
+		RetViaRef = FuncNeedsRetViaRef(Call->CalledFunc);
 		if (Call->CalledFunc->Record) {
 			++NumArgs;
 		}
-		if (RVO) {
+		if (RetViaRef) {
 			++NumArgs;
 		}
 	}
@@ -1306,11 +1415,13 @@ llvm::Value* june::IRGen::GenFuncCall(llvm::Value* LLAddr, FuncCall* Call) {
 
 	// The function being takes a reference to the returning
 	// struct as an argument rather than returning the struct
-	if (RVO) {
+	if (RetViaRef) {
 		if (!LLAddr) {
 			// For whatever reason the user is ignoring the return
 			// value of the structure so need to create it for them.
 			LLAddr = CreateTempAlloca(GenType(Call->CalledFunc->RetTy));
+			if (TypeNeedsDestruction(Call->CalledFunc->RetTy))
+				AddObjectToDestroy(Call->CalledFunc->RetTy, LLAddr);
 		}
 
 		LLArgs[ArgIndex++] = LLAddr;
@@ -1356,7 +1467,7 @@ llvm::Value* june::IRGen::GenFuncCall(llvm::Value* LLAddr, FuncCall* Call) {
 	}
 
 	EmitDebugLocation(Call);
-	if (!Call->IsConstructorCall && !RVO) {
+	if (!Call->IsConstructorCall && !RetViaRef) {
 		return CallValue;
 	} else {
 		return LLAddr; // Returning the newly generated object
@@ -1819,6 +1930,8 @@ llvm::Value* june::IRGen::GenUnaryOp(UnaryOp* UOP) {
 		} else {
 			return Builder.CreateNot(GenRValue(UOP->Val));
 		}
+	case '~':
+		return Builder.CreateNot(GenRValue(UOP->Val));
 	default:
 		assert(!"Unimplemented GenUnaryOp()");
 		return nullptr;
@@ -2034,7 +2147,7 @@ llvm::Value* june::IRGen::GenAssignment(llvm::Value* LLAddr, Expr* Val) {
 	} else if (Val->Kind == AstKind::FUNC_CALL) {
 		FuncCall* Call = ocast<FuncCall*>(Val);
 		if (Call->IsConstructorCall || 
-			(Call->CalledFunc && FuncNeedsRVO(Call->CalledFunc))
+			(Call->CalledFunc && FuncNeedsRetViaRef(Call->CalledFunc))
 			) {
 			GenFuncCall(LLAddr, Call);
 		} else {
@@ -2046,6 +2159,14 @@ llvm::Value* june::IRGen::GenAssignment(llvm::Value* LLAddr, Expr* Val) {
 		LLRValToStore = GenRValue(Val);
 	}
 	if (LLRValToStore) {
+		if (Val->is(AstKind::IDENT_REF) || Val->is(AstKind::FIELD_ACCESSOR)) {
+			if (TypeNeedsDestruction(Val->Ty)) {
+				// Movement of object.
+				if (Val->Ty->GetKind() == TypeKind::RECORD) {
+					
+				}
+			}
+		}
 		Builder.CreateStore(LLRValToStore, LLAddr);
 		EmitDebugLocation(Val);
 	}
@@ -2060,6 +2181,14 @@ void june::IRGen::GenBlock(llvm::BasicBlock* LLBB, LexScope& Scope) {
 	for (AstNode* Stmt : Scope.Stmts) {
 		GenNode(Stmt);
 	}
+	// Call the destructors unless the block ended in a return
+	// in which case the return destroys all the objects
+	if (!Scope.Stmts.empty()) {
+		if (!Scope.Stmts.back()->is(AstKind::RETURN)) {
+			CallDestructors(LocScope);
+		}
+	}
+	POP_SCOPE();
 }
 
 llvm::Type* june::IRGen::GenType(Type* Ty) {
@@ -2176,7 +2305,7 @@ void june::IRGen::GenDefaultValueNeedingRecordInitCalls(Type* Ty, llvm::Value* L
 	if (Ty->GetKind() == TypeKind::RECORD) {
 		RecordDecl* Record = Ty->AsRecordType()->Record;
 		if (Record->FieldsHaveAssignment) {
-			GenDefaultRecordInitCall(Record, LLAddr);
+			GenDefaultRecordConstructorCall(Record, LLAddr);
 		}
 	} else if (Ty->GetKind() == TypeKind::TUPLE) {
 		GenDefaultTupleValue(Ty->AsTupleType(), LLAddr);
@@ -2207,43 +2336,14 @@ void june::IRGen::GenRecordArrayObjsInitCalls(FixedArrayType* ArrTy,
 
 	// Looping through the array and calling the initialization
 	// function for each element.
-
-	llvm::BasicBlock* BeforeLoopBB = Builder.GetInsertBlock();
-	llvm::Value* LLEndOfArrPtr = CreateInBoundsGEP(LLArrStartPtr, { LLTotalLinearLength });
-
-	llvm::BasicBlock* LoopBB    = llvm::BasicBlock::Create(LLContext, "arr.objconstr.loop", LLFunc);
-	llvm::BasicBlock* LoopEndBB = llvm::BasicBlock::Create(LLContext, "arr.objconstr.end", LLFunc);
-
-	Builder.CreateBr(LoopBB);
-	Builder.SetInsertPoint(LoopBB);
-
-	Type* BaseTy = ArrTy->GetBaseType()->AsRecordType();
-	// Pointer used to traverse through the array
-	llvm::PHINode* LLArrPtr = Builder.CreatePHI(llvm::PointerType::get(GenType(BaseTy), 0), 0, "obj.loop.ptr");
-
-	// Incoming value to the start of the array from the incoming block
-	LLArrPtr->addIncoming(LLArrStartPtr, BeforeLoopBB);
-
-	if (BaseTy->GetKind() == TypeKind::RECORD) {
-		GenDefaultRecordInitCall(BaseTy->AsRecordType()->Record, LLArrPtr);
-	} else { // Tuple case - The tuples contain records
-		GenDefaultTupleValue(BaseTy->AsTupleType(), LLArrPtr);
-	}
-
-	// Move to the next element in the array
-	llvm::Value* LLNextElementPtr = CreateInBoundsGEP(LLArrPtr, { GetLLUInt32(1, LLContext) });
-
-	// Checking if all objects have been looped over
-	llvm::Value* LLLoopEndCond = Builder.CreateICmpEQ(LLNextElementPtr, LLEndOfArrPtr);
-	Builder.CreateCondBr(LLLoopEndCond, LoopEndBB, LoopBB);
-
-	// The value must come from the block that 'LLNextCount' is created
-	// in which would be whatever the current block is.
-	llvm::BasicBlock* LLCurBlock = Builder.GetInsertBlock();
-	LLArrPtr->addIncoming(LLNextElementPtr, LLCurBlock);
-
-	// End of loop
-	Builder.SetInsertPoint(LoopEndBB);
+	GenInteralArrayLoop(ArrTy, LLArrStartPtr, LLTotalLinearLength,
+		[this](llvm::PHINode* LLElmAddr, Type* BaseTy) {
+			if (BaseTy->GetKind() == TypeKind::RECORD) {
+				GenDefaultRecordConstructorCall(BaseTy->AsRecordType()->Record, LLElmAddr);
+			} else { // Tuple case - The tuples contain records
+				GenDefaultTupleValue(BaseTy->AsTupleType(), LLElmAddr);
+			}
+		});
 }
 
 llvm::Constant* june::IRGen::GenZeroedValue(Type* Ty) {
@@ -2431,9 +2531,9 @@ llvm::Value* june::IRGen::CreateTempAlloca(llvm::Type* LLTy) {
 	return LLAddr;
 }
 
-void june::IRGen::GenDefaultRecordInitCall(RecordDecl* Record, llvm::Value* LLAddr) {
-	auto it = Context.DefaultRecordInitFuncs.find(Record);
-	if (it != Context.DefaultRecordInitFuncs.end()) {
+void june::IRGen::GenDefaultRecordConstructorCall(RecordDecl* Record, llvm::Value* LLAddr) {
+	auto it = Context.DefaultRecordConstructorFuncs.find(Record);
+	if (it != Context.DefaultRecordConstructorFuncs.end()) {
 		Builder.CreateCall(it->second, LLAddr);
 		return;
 	}
@@ -2448,7 +2548,7 @@ void june::IRGen::GenDefaultRecordInitCall(RecordDecl* Record, llvm::Value* LLAd
 	llvm::Function* LLFunc = llvm::Function::Create(
 		LLFuncType,
 		llvm::Function::ExternalLinkage, // publically visible
-		"__june.record.init",
+		"__june.record.construct",
 		LLModule
 	);
 
@@ -2481,7 +2581,7 @@ void june::IRGen::GenDefaultRecordInitCall(RecordDecl* Record, llvm::Value* LLAd
 
 
 	Builder.SetInsertPoint(BackupBasicBlock);
-	Context.DefaultRecordInitFuncs.insert({ Record, LLFunc });
+	Context.DefaultRecordConstructorFuncs.insert({ Record, LLFunc });
 	Builder.CreateCall(LLFunc, LLAddr);
 
 }
@@ -2584,10 +2684,8 @@ llvm::Constant* june::IRGen::GenGlobalConstVal(VarDecl* Global, Expr* Assignment
 	}
 }
 
-bool june::IRGen::FuncNeedsRVO(FuncDecl* Func) {
-	// Valid reasons for using RVO
-	// 1. The structure is big
-	// 2. The structure has a destructor
+bool june::IRGen::FuncNeedsRetViaRef(FuncDecl* Func) {
+	
 	if (Func->RetTy->GetKind() != TypeKind::RECORD &&
 		Func->RetTy->GetKind() != TypeKind::TUPLE) {
 		return false;
@@ -2596,10 +2694,11 @@ bool june::IRGen::FuncNeedsRVO(FuncDecl* Func) {
 	//       Honestly, it should probably be system dependent?
 	const llvm::StructLayout* LLStructLayout = LLModule.getDataLayout().getStructLayout(
 		llvm::cast<llvm::StructType>(GenType(Func->RetTy)));
-	if (LLStructLayout->getSizeInBytes() > 8) {
+	if (LLStructLayout->getSizeInBytes() > 16) {
 		return true;
 	}
-	return false;
+
+	return TypeNeedsDestruction(Func->RetTy);
 }
 
 void june::IRGen::EmitDebugLocation(AstNode* Node) {
@@ -2617,26 +2716,164 @@ june::DebugInfoEmitter* june::IRGen::GetDIEmitter() {
 	return CFunc->FU->DIEmitter;
 }
 
-void june::IRGen::GenStoreRVOStructRes(Expr* Assignment) {
-	llvm::Value* LLRVOStructAddr;
+void june::IRGen::GenStoreRetStructRes(Expr* Assignment, llvm::Value* LLStructToBeAssigned) {
+	llvm::Value* LLRetStructAddr;
 	if (LLThis) {
 		// Must be the second parameter
-		LLRVOStructAddr = LLFunc->getArg(1);
+		LLRetStructAddr = LLFunc->getArg(1);
 	} else {
-		LLRVOStructAddr = LLFunc->getArg(0);
+		LLRetStructAddr = LLFunc->getArg(0);
 	}
 
-	llvm::Value* LLStructAssignment = GenNode(Assignment);
-
+	
 	llvm::StructType* LLStructTy = llvm::cast<llvm::StructType>(
-		LLStructAssignment->getType()->getPointerElementType());
+		LLStructToBeAssigned->getType()->getPointerElementType());
 
 	const llvm::StructLayout* LLStructLayout = LLModule.getDataLayout().getStructLayout(LLStructTy);
 	llvm::Align LLAlignment = LLStructLayout->getAlignment();
 	
 	Builder.CreateMemCpy(
-		LLRVOStructAddr   , LLAlignment,
-		LLStructAssignment, LLAlignment,
+		LLRetStructAddr     , LLAlignment,
+		LLStructToBeAssigned, LLAlignment,
 		SizeOfTypeInBytes(LLStructTy)
 	);
+}
+
+void june::IRGen::AddObjectToDestroy(Type* TypeBeingDestroyed, llvm::Value* LLObjectAddr) {
+	LocScope->ObjectsNeedingDestroyed.push_back(std::make_tuple(TypeBeingDestroyed, LLObjectAddr));
+}
+
+void june::IRGen::CallDestructors(Scope* LocScope, llvm::Value* LLReturingObjectAddr) {
+	for (auto& ObjectNeedingDestroyed : LocScope->ObjectsNeedingDestroyed) {
+		Type* TypeBeingDestroyed = std::get<0>(ObjectNeedingDestroyed);
+		llvm::Value* LLAddr      = std::get<1>(ObjectNeedingDestroyed);
+
+		if (LLReturingObjectAddr != LLAddr) {
+			CallDestructors(TypeBeingDestroyed, LLAddr);
+		}
+	}
+}
+
+void june::IRGen::CallDestructorsForRet(llvm::Value* LLReturingObjectAddr) {
+	Scope* ScopeItr = LocScope;
+	while (ScopeItr) {
+		CallDestructors(ScopeItr, LLReturingObjectAddr);
+		ScopeItr = ScopeItr->Parent;
+	}
+}
+
+void june::IRGen::CallDestructors(Type* TypeBeingDestroyed, llvm::Value* LLAddr) {
+	if (TypeBeingDestroyed->GetKind() == TypeKind::RECORD) {
+		RecordDecl* Record = TypeBeingDestroyed->AsRecordType()->Record;
+		if (Record->Destructor) {
+			GenFuncDecl(Record->Destructor);
+			
+			Builder.CreateCall(Record->Destructor->LLAddress, LLAddr);
+		} else {
+			GenDefaultDestructor(Record, LLAddr);
+		}
+	} else if (TypeBeingDestroyed->GetKind() == TypeKind::FIXED_ARRAY) {
+		FixedArrayType* ArrTy = TypeBeingDestroyed->AsFixedArrayType();
+		llvm::Value* LLArrStartPtr = GetArrayAsPtrGeneral(LLAddr, ArrTy->GetNestingLevel() + 1);
+		llvm::Value* LLTotalLinearLength = GetLLUInt32(ArrTy->GetTotalLinearLength(), LLContext);
+		GenInteralArrayLoop(ArrTy, LLArrStartPtr, LLTotalLinearLength,
+			[this](llvm::PHINode* LLElmAddr, Type* BaseTy) {
+				CallDestructors(BaseTy, LLElmAddr);
+			});
+	} else if (TypeBeingDestroyed->GetKind() == TypeKind::TUPLE) {
+		TupleType* TupleTy = TypeBeingDestroyed->AsTupleType();
+		u32 IdxCount = 0;
+		for (Type* ValTy : TupleTy->SubTypes) {
+			llvm::Value* LLValAddr = CreateStructGEP(LLAddr, IdxCount);
+			CallDestructors(ValTy, LLValAddr);
+			++IdxCount;
+		}
+	}
+}
+
+void june::IRGen::GenDefaultDestructor(RecordDecl* Record, llvm::Value* LLAddr) {
+	auto it = Context.DefaultRecordDestructorFuncs.find(Record);
+	if (it != Context.DefaultRecordDestructorFuncs.end()) {
+		Builder.CreateCall(it->second, LLAddr);
+		return;
+	}
+
+	llvm::Type* LLStructPtrTy = llvm::PointerType::get(Record->LLStructTy, 0);
+
+	// Need to create the declaration for the default init func
+	llvm::FunctionType* LLFuncType =
+		llvm::FunctionType::get(llvm::Type::getVoidTy(LLContext),
+			{ LLStructPtrTy }, false);
+
+	llvm::Function* LLFunc = llvm::Function::Create(
+		LLFuncType,
+		llvm::Function::ExternalLinkage, // publically visible
+		"__june.record.destroy",
+		LLModule
+	);
+
+	llvm::BasicBlock* LLEntryBlock = llvm::BasicBlock::Create(LLContext, "entry.block", LLFunc);
+	llvm::BasicBlock* BackupBasicBlock = Builder.GetInsertBlock();
+	Builder.SetInsertPoint(LLEntryBlock);
+	
+	for (VarDecl* Field : Record->FieldsByIdxOrder) {
+		if (TypeNeedsDestruction(Field->Ty)) {
+			llvm::Value* LLFieldAddr = CreateStructGEP(LLFunc->getArg(0), Field->FieldIdx);
+			CallDestructors(Field->Ty, LLFieldAddr);
+		}
+	}
+
+	Builder.CreateRetVoid();
+	
+	if (DisplayLLVMIR) {
+		LLFunc->print(llvm::outs());
+		llvm::outs() << '\n';
+	}
+
+	Builder.SetInsertPoint(BackupBasicBlock);
+	Context.DefaultRecordDestructorFuncs.insert({ Record, LLFunc });
+	Builder.CreateCall(LLFunc, LLAddr);
+
+}
+
+void june::IRGen::GenInteralArrayLoop(FixedArrayType* ArrTy,
+	                                  llvm::Value* LLArrStartPtr,
+	                                  llvm::Value* LLTotalLinearLength,
+	                                  const std::function<void(llvm::PHINode*, Type*)>& CodeGenCallback) {
+	
+	// Looping through the array and performing some code on each element
+	// of the array
+
+	llvm::BasicBlock* BeforeLoopBB = Builder.GetInsertBlock();
+	llvm::Value* LLEndOfArrPtr = CreateInBoundsGEP(LLArrStartPtr, { LLTotalLinearLength });
+
+	llvm::BasicBlock* LoopBB    = llvm::BasicBlock::Create(LLContext, "arr.objconstr.loop", LLFunc);
+	llvm::BasicBlock* LoopEndBB = llvm::BasicBlock::Create(LLContext, "arr.objconstr.end", LLFunc);
+
+	Builder.CreateBr(LoopBB);
+	Builder.SetInsertPoint(LoopBB);
+
+	Type* BaseTy = ArrTy->GetBaseType();
+	// Pointer used to traverse through the array
+	llvm::PHINode* LLArrPtr = Builder.CreatePHI(llvm::PointerType::get(GenType(BaseTy), 0), 0, "obj.loop.ptr");
+
+	// Incoming value to the start of the array from the incoming block
+	LLArrPtr->addIncoming(LLArrStartPtr, BeforeLoopBB);
+
+	CodeGenCallback(LLArrPtr, BaseTy);
+
+	// Move to the next element in the array
+	llvm::Value* LLNextElementPtr = CreateInBoundsGEP(LLArrPtr, { GetLLUInt32(1, LLContext) });
+
+	// Checking if all objects have been looped over
+	llvm::Value* LLLoopEndCond = Builder.CreateICmpEQ(LLNextElementPtr, LLEndOfArrPtr);
+	Builder.CreateCondBr(LLLoopEndCond, LoopEndBB, LoopBB);
+
+	// The value must come from the block that 'LLNextCount' is created
+	// in which would be whatever the current block is.
+	llvm::BasicBlock* LLCurBlock = Builder.GetInsertBlock();
+	LLArrPtr->addIncoming(LLNextElementPtr, LLCurBlock);
+
+	// End of loop
+	Builder.SetInsertPoint(LoopEndBB);
 }

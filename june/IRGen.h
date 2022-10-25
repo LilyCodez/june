@@ -29,6 +29,7 @@ namespace june {
 		llvm::Value* GenNode(AstNode* Node);
 
 		void GenGlobalInitFunc();
+		void GenGlobalDestroyFunc();
 
 	private:
 		JuneContext&       Context;
@@ -37,6 +38,14 @@ namespace june {
 		llvm::IRBuilder<>  Builder;
 		bool               EmitDebugInfo;
 		bool               DisplayLLVMIR;
+
+		struct Scope {
+			
+			Scope* Parent = nullptr;
+
+			llvm::SmallVector<std::tuple<Type*, llvm::Value*>> ObjectsNeedingDestroyed;
+
+		} *LocScope = nullptr;;
 
 		FuncDecl*       CFunc;
 		llvm::Function* LLFunc;
@@ -55,9 +64,11 @@ namespace june {
 		llvm::SmallVector<llvm::BasicBlock*, 4> LoopContinueStack;
 
 		llvm::Function* GenGlobalInitFuncDecl();
+		llvm::Function* GenGlobalDestroyFuncDecl();
 		void GenGlobalPostponedAssignments();
 		void GenGlobalVarDeclList(VarDeclList* DeclList);
 		bool TypeNeedsRecordInit(Type* Ty);
+		bool TypeNeedsDestruction(Type* Ty);
 
 		void GenFuncDecl(FuncDecl* Func);
 		void GenGenericFuncDecl(GenericFuncDecl* Func, u32 BindingId);
@@ -163,7 +174,7 @@ namespace june {
 
 		llvm::Value* CreateTempAlloca(llvm::Type* LLTy);
 
-		void GenDefaultRecordInitCall(RecordDecl* Record, llvm::Value* LLAddr);
+		void GenDefaultRecordConstructorCall(RecordDecl* Record, llvm::Value* LLAddr);
 		
 		llvm::Value* GenMalloc(llvm::Type* LLType, llvm::Value* LLArrSize);
 
@@ -173,13 +184,25 @@ namespace june {
 
 		llvm::Constant* GenGlobalConstVal(VarDecl* Global, Expr* Assignment);
 
-		bool FuncNeedsRVO(FuncDecl* Func);
+		bool FuncNeedsRetViaRef(FuncDecl* Func);
 
 		void EmitDebugLocation(AstNode* Node);
 		DebugInfoEmitter* GetDIEmitter(Decl* D);
 		DebugInfoEmitter* GetDIEmitter();
 
-		void GenStoreRVOStructRes(Expr* Assignment);
+		void GenStoreRetStructRes(Expr* Assignment, llvm::Value* LLStructToBeAssigned);
+
+		void AddObjectToDestroy(Type* TypeBeingDestroyed, llvm::Value* LLObjectAddr);
+
+		void CallDestructors(Scope* LocScope, llvm::Value* LLReturingObjectAddr = nullptr);
+		void CallDestructorsForRet(llvm::Value* LLReturingObjectAddr = nullptr);
+		void CallDestructors(Type* TypeBeingDestroyed, llvm::Value* LLAddr);
+		void GenDefaultDestructor(RecordDecl* Record, llvm::Value* LLAddr);
+
+		void GenInteralArrayLoop(FixedArrayType* ArrTy,
+	                             llvm::Value* LLArrStartPtr,
+	                             llvm::Value* LLTotalLinearLength,
+			                     const std::function<void(llvm::PHINode*, Type*)>& CodeGenCallback);
 
 	};
 }

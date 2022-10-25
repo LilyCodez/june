@@ -1,0 +1,30 @@
+import Tests;
+
+A :: record {
+	
+	f: i32;
+	
+	~A() {
+		Tests.print("Destroyed(");
+		Tests.print(f);
+		Tests.print(")");
+	}
+}
+
+f() -> A {
+	val: i32 = 124;
+	a: A = A(55);
+	b: A = A(77);
+
+	if val > 3 {
+		return a;	
+	} else {
+		return b;
+	}
+}
+
+main() {
+	Tests.print("Begin ");
+	f();
+	Tests.print(" endof f() call ");
+}

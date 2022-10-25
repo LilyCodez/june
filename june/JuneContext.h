@@ -103,7 +103,7 @@ namespace june {
 			Decl* D;
 		};
 
-		std::queue<DeclGen>      QuededDeclsToGen;
+		std::queue<DeclGen>       QuededDeclsToGen;
 		
 		std::unordered_set<Decl*> UncheckedDecls;
 
@@ -114,8 +114,10 @@ namespace june {
 		u32                NumGeneratedGlobalArrays = 0;
 		u32                NumGeneratedGlobalVars   = 0;
 		llvm::Function*    JuneInitGlobalsFunc;
+		llvm::Function*    JuneDestroyGlobalsFunc;
 		llvm::Function*    JuneStdLibInitFunc;
-		llvm::DenseMap<RecordDecl*, llvm::Function*>    DefaultRecordInitFuncs;
+		llvm::DenseMap<RecordDecl*, llvm::Function*>    DefaultRecordConstructorFuncs;
+		llvm::DenseMap<RecordDecl*, llvm::Function*>    DefaultRecordDestructorFuncs;
 		llvm::DenseMap<Identifier, llvm::Intrinsic::ID> LLVMIntrinsicsTable;
 
 		struct GlobalPostponedAssignment {
@@ -127,6 +129,7 @@ namespace june {
 			Expr* Assignment;
 		};
 		llvm::SmallVector<GlobalPostponedAssignment, 16> GlobalPostponedAssignments;
+		llvm::SmallVector<VarDecl*, 16>                  GlobalsNeedingDestruction;
 		
 		// LLVM Debugging basic types
 		llvm::DenseMap<RecordDecl*, llvm::DICompositeType*> DIRecordTys;

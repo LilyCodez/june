@@ -1,0 +1,16 @@
+import Tests;
+
+A :: record {
+	y: i32;
+
+	~A() {
+		Tests.print("Destroyed!");
+	}
+}
+
+a: A;
+
+main() {
+	Tests.print("Begin ");
+	a.y = 412; // Setting a variable so the global gets used
+}

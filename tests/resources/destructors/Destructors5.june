@@ -1,0 +1,16 @@
+import Tests;
+
+A :: record {
+	~A() {
+		Tests.print("Destroyed!");
+	}
+
+	func() -> i32 {
+		return 14;
+	}
+}
+
+main() {
+	e := A().func();
+	Tests.print("Begin ");
+}

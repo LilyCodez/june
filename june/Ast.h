@@ -5,6 +5,7 @@
 #include "Logger.h"
 #include "RecordLocation.h"
 
+#include <unordered_set>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/ADT/DenseMap.h>
 
@@ -233,6 +234,7 @@ namespace june {
 		llvm::Constant* LLComptimeVal = nullptr;
 		
 		RecordDecl* Record = nullptr;
+		FuncDecl*   Func   = nullptr;
 		u32 FieldIdx = -1;
 		u32 ParamIdx = -1;
 		bool UsesInferedType = false;
@@ -243,21 +245,17 @@ namespace june {
 
 	};
 
-	struct VarDeclList : AstNode {
+	struct VarDeclList : Decl {
 
 		llvm::SmallVector<VarDecl*, 2> Decls;
 		// Some sort of decomposable type like a tuple.
 		Type* Ty;
-		FileUnit*   FU;
 		RecordDecl* Record = nullptr;
+		Expr* Assignment   = nullptr;
 		bool UsesInferedTypes = false;
-		bool AlreadyGenerated = false;
-		bool HasBeenChecked   = false;
-		
-		Expr* Assignment      = nullptr;
 
 		VarDeclList()
-			: AstNode(AstKind::VAR_DECL_LIST) {}
+			: Decl(AstKind::VAR_DECL_LIST) {}
 
 	};
 
@@ -269,9 +267,12 @@ namespace june {
 		llvm::DenseMap<Identifier, VarDecl*>  Fields;
 		llvm::DenseMap<Identifier, FuncsList> Funcs; // member functions
 		FuncsList                             Constructors;
+		FuncDecl*                             Destructor = nullptr;
 
 		llvm::StructType* LLStructTy = nullptr;
-		bool FieldsHaveAssignment    = false;
+		bool FieldsHaveAssignment           = false;
+		bool NeedsDestruction               = false;
+		bool AlreadyRequestedDestructionGen = false;
 
 		RecordDecl() : Decl(AstKind::RECORD_DECL) {}
 

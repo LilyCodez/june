@@ -77,13 +77,21 @@ void june::Parser::Parse() {
 		switch (Node->Kind) {
 		case AstKind::RECORD_DECL:
 			break;
-		case AstKind::VAR_DECL:
-			ProcessGlobalVar(ocast<VarDecl*>(Node));
+		case AstKind::VAR_DECL: {
+			VarDecl* Global = ocast<VarDecl*>(Node);
+			if (Global->isNot(AstKind::ERROR)) {
+				Context.UncheckedDecls.insert(Global);
+				ProcessGlobalVar(Global);
+			}
 			break;
+		}
 		case AstKind::VAR_DECL_LIST: {
 			VarDeclList* DeclList = ocast<VarDeclList*>(Node);
-			for (VarDecl* Global : DeclList->Decls) {
-				ProcessGlobalVar(Global);
+			if (DeclList->isNot(AstKind::ERROR)) {
+				Context.UncheckedDecls.insert(DeclList);
+				for (VarDecl* Global : DeclList->Decls) {
+					ProcessGlobalVar(Global);
+				}
 			}
 			break;
 		}
@@ -216,16 +224,13 @@ void june::Parser::ParseImport() {
 }
 
 void june::Parser::ProcessGlobalVar(VarDecl* Global) {
-	if (Global->isNot(AstKind::ERROR)) {
-		Global->IsGlobal = true;
-		Context.UncheckedDecls.insert(Global);
-		auto it = FU->GlobalVars.find(Global->Name);
-		if (it != FU->GlobalVars.end()) {
-			Error(Global->Loc, "Redeclaration of global variable '%s'. First declared at line: %s",
-				Global->Name.Text, it->second->Loc.LineNumber);
-		}
-		FU->GlobalVars.insert({ Global->Name, Global });
+	Global->IsGlobal = true;
+	auto it = FU->GlobalVars.find(Global->Name);
+	if (it != FU->GlobalVars.end()) {
+		Error(Global->Loc, "Redeclaration of global variable '%s'. First declared at line: %s",
+			Global->Name.Text, it->second->Loc.LineNumber);
 	}
+	FU->GlobalVars.insert({ Global->Name, Global });
 }
 
 void june::Parser::ParseScopeStmts(LexScope& Scope) {
@@ -278,6 +283,22 @@ june::AstNode* june::Parser::ParseStmt() {
 			} else {
 				Stmt = ParseVarDecl(NameTok, Mods); Match(';');
 			}
+		}
+		break;
+	}
+	case '~': {
+		// Destructor case.
+		if (PeekToken(1).is(TokenKind::IDENT) && PeekToken(2).is('(')) {
+			Token StartTok = CTok;
+			NextToken(); // Consuming '~'
+			Token NameTok = CTok;
+			NextToken(); // Consuming name token
+			llvm::SmallVector<Identifier> Generics;
+			// Hack: Shoving the ~ into the name of the token
+			NameTok.Loc.Text = llvm::StringRef(StartTok.Loc.Text.begin(), NameTok.GetText().size() + 1);
+			Stmt = ParseFuncDecl(NameTok, 0, Generics, true);
+		} else {
+			Stmt = ParseExpr();
 		}
 		break;
 	}
@@ -388,7 +409,7 @@ june::AstNode* june::Parser::ParseStmt() {
 	return Stmt;
 }
 
-june::FuncDecl* june::Parser::ParseFuncDecl(Token NameTok, mods::Mod Mods, llvm::SmallVector<Identifier>& Generics) {
+june::FuncDecl* june::Parser::ParseFuncDecl(Token NameTok, mods::Mod Mods, llvm::SmallVector<Identifier>& Generics, bool IsDestructor) {
 	
 	Identifier Name = ParseIdentifier(NameTok, "Expected identifier for function declaration");
 
@@ -492,16 +513,35 @@ june::FuncDecl* june::Parser::ParseFuncDecl(Token NameTok, mods::Mod Mods, llvm:
 	if (Func->isNot(AstKind::ERROR)) {
 		if (CRecord) {
 			Func->Record = CRecord;
-			if (Func->Name == CRecord->Name) {
-				CheckFuncRedeclaration(CRecord->Constructors, Func);
-				CRecord->Constructors.push_back(Func);
-				if (Func->RetTy->isNot(Context.VoidType)) {
-					Error(Func->Loc, "Constructors expected to return void");
+			if (Func->Name == CRecord->Name ||
+				(IsDestructor && Func->Name.Text.substr(1) == CRecord->Name.Text)) {
+				if (!IsDestructor) {
+					CheckFuncRedeclaration(CRecord->Constructors, Func);
+					CRecord->Constructors.push_back(Func);
+					if (Func->RetTy->isNot(Context.VoidType)) {
+						Error(Func->Loc, "Constructors expected to return void");
+					}
+				} else {
+					if (!Func->Params.empty()) {
+						Error(Func->Loc, "Destructors cannot have parameters");
+					}
+					if (CRecord->Destructor) {
+						Error(Func->Loc, "Duplicate destructor");
+					}
+					if (Func->RetTy->isNot(Context.VoidType)) {
+						Error(Func->Loc, "Destructor expected to return void");
+					}
+					CRecord->Destructor = Func;
 				}
+			} else if (IsDestructor) {
+				Error(Func->Loc, "Destructor name '%s' does not match record name '%s'",
+					Func->Name.Text.substr(1), CRecord->Name);
 			} else {
 				CheckFuncRedeclaration(CRecord->Funcs, Func);
 				CRecord->Funcs[Name].push_back(Func);
 			}
+		} else if (IsDestructor) {
+			Error(Func->Loc, "Destructor must be within a record");
 		}
 		if (!(Func->Mods & mods::Mods::NATIVE)) {
 			if (Func->isNot(AstKind::GENERIC_FUNC_DECL))
@@ -527,6 +567,7 @@ june::VarDecl* june::Parser::ParseVarDecl(Token NameTok, mods::Mod Mods, bool Pa
 	Var->Mods = Mods;
 	Var->FU     = FU;
 	Var->Record = CRecord;
+	Var->Func   = CFunc;
 
 	if (Var->Mods & mods::Mods::NATIVE) {
 		if (!NativeModifierName.empty()) {
@@ -1090,7 +1131,7 @@ june::Expr* june::Parser::ParsePrimaryExpr() {
 		UOP->Op = Op;
 		return UOP;
 	}
-	case '&': case '*': case '!': {
+	case '&': case '*': case '!': case '~': {
 		UnaryOp* UOP = NewNode<UnaryOp>(CTok);
 		UOP->Op = CTok.Kind;
 

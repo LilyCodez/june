@@ -24,8 +24,8 @@ if (CH->Ty                         \
         ->is(Context.ErrorType)) { \
 	YIELD_ERROR(N); }
 
-june::Analysis::Analysis(JuneContext& context, Logger& log)
-	: Context(context), Log(log) {
+june::Analysis::Analysis(JuneContext& context, Logger& log, bool forCodeGen)
+	: Context(context), Log(log), ForCodeGen(forCodeGen) {
 }
 
 void june::Analysis::ResolveRecordTypes(JuneContext& Context, FileUnit* FU) {
@@ -99,7 +99,7 @@ void june::Analysis::ResolveRecordTypes(JuneContext& Context, FileUnit* FU) {
 
 void june::Analysis::CheckRecords(JuneContext& Context, FileUnit* FU) {
 	for (auto& [_, Record] : FU->Records) {
-		Analysis A(Context, FU->Log);
+		Analysis A(Context, FU->Log, false);
 		A.CheckRecordDecl(Record);
 	}
 }
@@ -113,23 +113,23 @@ void june::Analysis::ReportInvalidFUStmts(FileUnit* FU) {
 
 void june::Analysis::CheckVarDecl(VarDecl* Var) {
 	if (Var->HasBeenChecked) return;
-	
-	Context.UncheckedDecls.erase(Var);
 
 	FU      = Var->FU;
 	CRecord = Var->Record;
+	CFunc   = Var->Func;
 
 	Var->HasBeenChecked = true;
 	Var->IsBeingChecked = true;
 
 	if (Var->FieldIdx != -1) {
 		CField = Var;
-	}
-
-	if (Var->IsGlobal) {
+	} else if (Var->IsGlobal) {
 		// Global variable. Need to request generation.
 		CGlobal = Var;
 		Context.RequestGen(Var);
+		if (!Var->ParentDeclList) {
+			Context.UncheckedDecls.erase(Var);
+		}
 	}
 
 #define VAR_YIELD(E)         \
@@ -203,9 +203,7 @@ YIELD_ERROR(Var)
 		VAR_YIELD(Error(Var, "Variables marked 'comptime' should be initialized"));
 	}
 
-	if (Var->Ty->GetKind() == TypeKind::RECORD) {
-		EnsureChecked(Var->Loc, Var->Ty->AsRecordType()->Record);
-	}
+	CheckRecordsInType(Var->Loc, Var->Ty);
 
 	Var->IsBeingChecked = false;
 	CField = nullptr;
@@ -222,12 +220,13 @@ void june::Analysis::CheckRecordDecl(RecordDecl* Record) {
 
 	Record->HasBeenChecked = true;
 	Record->IsBeingChecked = true;
-
+	
 	for (auto& [_, Field] : Record->Fields) {
 		CheckVarDecl(Field);
+
 		if (Field->Ty->GetKind() == TypeKind::RECORD) {
-			Record->FieldsHaveAssignment |=
-				Field->Ty->AsRecordType()->Record->FieldsHaveAssignment;
+			RecordDecl* FieldRecord = Field->Ty->AsRecordType()->Record;
+			Record->FieldsHaveAssignment |= FieldRecord->FieldsHaveAssignment;	
 		}
 	}
 
@@ -257,6 +256,43 @@ void june::Analysis::CheckGenericFuncDecl(GenericFuncDecl* GenFunc, u32 BindingI
 	BindTypes(GenFunc, BindingId);
 	CheckFuncDecl(GenFunc);
 	UnbindTypes(GenFunc);
+}
+
+bool june::Analysis::TypeHasFieldsWithAssignment(Type* Ty) {
+	if (Ty->GetKind() == TypeKind::RECORD) {
+		RecordDecl* FieldRecord = Ty->AsRecordType()->Record;
+		return FieldRecord->FieldsHaveAssignment;
+	} else if (Ty->GetKind() == TypeKind::TUPLE) {
+		TupleType* TupleTy = Ty->AsTupleType();
+		for (Type* ValueTy : TupleTy->SubTypes) {
+			if (TypeHasFieldsWithAssignment(ValueTy)) {
+				return true;
+			}
+		}
+	} else if (Ty->GetKind() == TypeKind::FIXED_ARRAY) {
+		Type* BaseTy = Ty->AsFixedArrayType()->GetBaseType();
+		return TypeHasFieldsWithAssignment(BaseTy);
+	}
+	return false;
+}
+
+void june::Analysis::CheckRecordsInType(SourceLoc ErrLoc, Type* Ty) {
+	TypeKind K = Ty->GetKind();
+	if (K == TypeKind::RECORD) {
+		EnsureChecked(ErrLoc, Ty->AsRecordType()->Record);
+	} else if (K == TypeKind::FIXED_ARRAY || K == TypeKind::POINTER) {
+		CheckRecordsInType(ErrLoc, Ty->AsContainerType()->GetBaseType());
+	} else if (Ty->GetKind() == TypeKind::TUPLE) {
+		TupleType* TupleTy = Ty->AsTupleType();
+		for (Type* ValueTy : TupleTy->SubTypes) {
+			CheckRecordsInType(ErrLoc, ValueTy);
+		}
+	} else if (Ty->GetKind() == TypeKind::FUNCTION) {
+		FunctionType* FuncTy = Ty->AsFunctionType();
+		for (Type* ParamTy : FuncTy->ParamTypes) {
+			CheckRecordsInType(ErrLoc, ParamTy);
+		}
+	}
 }
 
 bool june::Analysis::CheckInferedTypeAssignment(AstNode* Decl, Expr* Assignment) {
@@ -441,6 +477,9 @@ void june::Analysis::CheckVarDeclList(VarDeclList* DeclList) {
 
 	FU      = DeclList->FU;
 	CRecord = DeclList->Record;
+	if (!CRecord) {
+		Context.UncheckedDecls.erase(DeclList);
+	}
 
 	if (DeclList->Assignment) {
 
@@ -492,7 +531,7 @@ void june::Analysis::CheckReturn(ReturnStmt* Ret) {
 	LocScope->FoundTerminal  = true;
 	LocScope->AllPathsReturn = true;
 
-	if (CFunc->NumReturns == 1 && LocScope->Node->isNot(AstKind::INNER_SCOPE)) {
+	if (CFunc->NumReturns == 1 && LocScope->Node != CFunc && LocScope->Node->isNot(AstKind::INNER_SCOPE)) {
 		++CFunc->NumReturns;
 	}
 
@@ -773,6 +812,8 @@ void june::Analysis::CheckIdentRefCommon(IdentRef* IRef, bool GivePrefToFuncs, F
 		}
 
 		IRef->Ty = Var->Ty;
+
+		CheckRecordsInType(IRef->Loc, Var->Ty);
 		break;
 	}
 	case IdentRef::FUNCS: {
@@ -839,7 +880,7 @@ void june::Analysis::CheckFieldAccessor(FieldAccessor* FA, bool GivePrefToFuncs)
 
 		RecordDecl* Record = Site->Ty->GetKind() == TypeKind::RECORD ? Site->Ty->AsRecordType()->Record
 			                                                         : Site->Ty->AsPointerType()->ElmTy->AsRecordType()->Record;
-		EnsureChecked(FA->Loc, Record);
+		CheckRecordsInType(FA->Loc, Site->Ty);
 		CheckIdentRefCommon(FA, GivePrefToFuncs, nullptr, Record);
 	
 		return;
@@ -1130,9 +1171,7 @@ void june::Analysis::CheckFuncCall(FuncCall* Call) {
 		UnbindTypes(ocast<GenericFuncDecl*>(CalledFunc));
 	}
 
-	if (Call->Ty->GetKind() == TypeKind::RECORD) {
-		EnsureChecked(Call->Loc, Call->Ty->AsRecordType()->Record);
-	}
+	CheckRecordsInType(Call->Loc, Call->Ty);
 }
 
 void june::Analysis::CheckDefaultRecordInitFuncCall(FuncCall* Call, RecordDecl* Record) {
@@ -1848,7 +1887,7 @@ YIELD_ERROR(UOP)
 		UOP->Ty = Context.BoolType;
 		break;
 	}
-	case '-': case '+': {
+	case '-': case '+': case '~': {
 		if (!VT->isNumber()) {
 			OPERATOR_CANNOT_APPLY(VT);
 		}
@@ -2269,7 +2308,7 @@ void june::Analysis::EnsureChecked(SourceLoc ELoc, VarDecl* Var) {
 		return;
 	}
 
-	Analysis A(Context, Var->FU->Log);
+	Analysis A(Context, Var->FU->Log, ForCodeGen);
 	if (CField) {
 		Var->DepD = CField; // CField depends on Var.
 	} else {
@@ -2285,18 +2324,20 @@ void june::Analysis::EnsureChecked(SourceLoc ELoc, VarDecl* Var) {
 }
 
 void june::Analysis::EnsureChecked(SourceLoc ELoc, RecordDecl* Record) {
-	if (!CRecord) return;
+	if (ForCodeGen) {
+		RequestRecordDestructionGen(Record);
+	} else {
+		if (Record->IsBeingChecked) {
+			Log.Error(ELoc, "Records form a circular dependency");
+			DisplayCircularDep(CRecord);
+			return;
+		}
 
-	if (Record->IsBeingChecked) {
-		Log.Error(ELoc, "Records form a circular dependency");
-		DisplayCircularDep(CRecord);
-		return;
+		Analysis A(Context, Record->FU->Log, ForCodeGen);
+		Record->DepD = CRecord;
+		A.CheckRecordDecl(Record);
+		Record->DepD = nullptr;
 	}
-
-	Analysis A(Context, Record->FU->Log);
-	Record->DepD = CRecord;
-	A.CheckRecordDecl(Record);
-	Record->DepD = nullptr;
 }
 
 void june::Analysis::DisplayCircularDep(Decl* StartDep) {
@@ -2356,4 +2397,35 @@ june::RecordType* june::Analysis::GetRecordType(RecordDecl* Record) {
 	}
 
 	return ResTy;
+}
+
+bool june::Analysis::RequestRecordDestructionGen(RecordDecl* Record) {
+	if (!Record->AlreadyRequestedDestructionGen) {
+		Record->AlreadyRequestedDestructionGen = true;
+
+		Record->NeedsDestruction = Record->Destructor != nullptr;
+		if (Record->Destructor)
+			Context.RequestGen(Record->Destructor);
+		for (VarDecl* Field : Record->FieldsByIdxOrder) {
+			Record->NeedsDestruction |= TypeNeedsDestructionAndGenDestructors(Field->Ty);
+		}
+	}
+	return Record->NeedsDestruction;
+}
+
+bool june::Analysis::TypeNeedsDestructionAndGenDestructors(Type* Ty) {
+	if (Ty->GetKind() == TypeKind::RECORD) {
+		return RequestRecordDestructionGen(Ty->AsRecordType()->Record);
+	} else if (Ty->GetKind() == TypeKind::TUPLE) {
+		TupleType* TupleTy = Ty->AsTupleType();
+		for (Type* ValueTy : TupleTy->SubTypes) {
+			if (TypeNeedsDestructionAndGenDestructors(ValueTy)) {
+				return true;
+			}
+		}
+	} else if (Ty->GetKind() == TypeKind::FIXED_ARRAY) {
+		Type* BaseTy = Ty->AsFixedArrayType()->GetBaseType();
+		return TypeNeedsDestructionAndGenDestructors(BaseTy);
+	}
+	return false;
 }
