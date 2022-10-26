@@ -100,6 +100,7 @@ namespace june {
 			Var->LLAddress = nullptr;
 			Var->HasBeenChecked = false;
 			Var->IsBeingChecked = false;
+			Var->MemoryWasMoved = false;
 			if (Var->Assignment) {
 				ResetNode(Var->Assignment);
 			}

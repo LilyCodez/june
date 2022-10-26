@@ -23,12 +23,23 @@ namespace june {
 		Logger(const SourceBuf& buf, llvm::raw_ostream& os, const std::string& filePath);
 
 		void Error(SourceLoc Loc, const c8* Msg) {
-			Error(Loc, [&]() { OS << Msg; });
+			ErrorInternal(Loc, {}, nullptr, [&]() { OS << Msg; });
+		}
+
+		void ErrorWithMark(SourceLoc Loc, SourceLoc MarkLoc, const c8* MarkMsg, const c8* Msg) {
+			ErrorInternal(Loc, MarkLoc, MarkMsg, [&]() { OS << Msg; });
+		}
+
+		template<typename... Targs>
+		void ErrorWithMark(SourceLoc Loc, SourceLoc MarkLoc, const c8* MarkMsg, const c8* Fmt, Targs&&... Args) {
+			ErrorInternal(Loc, MarkLoc, MarkMsg, [&]() {
+				ForwardFmt(OS, Fmt, std::forward<Targs>(Args)...);
+				});
 		}
 
 		template<typename... Targs>
 		void Error(SourceLoc Loc, const c8* Fmt, Targs&&... Args) {
-			Error(Loc, [&] {
+			ErrorInternal(Loc, SourceLoc{}, nullptr, [&]() {
 				ForwardFmt(OS, Fmt, std::forward<Targs>(Args)...);
 				});
 		}
@@ -85,7 +96,7 @@ namespace june {
 		const std::string  FilePath;
 		std::string        LNPad;
 
-		void Error(SourceLoc Loc, const std::function<void()>& Printer);
+		void ErrorInternal(SourceLoc Loc, SourceLoc MarkLoc, const c8* MarkMessage, const std::function<void()>& Printer);
 
 		static void GlobalError(llvm::raw_ostream& OS, const std::function<void()>& Printer);
 

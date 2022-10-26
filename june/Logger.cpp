@@ -24,7 +24,7 @@ june::Logger::Logger(const SourceBuf& buf, llvm::raw_ostream& os, const std::str
 	: Buf(buf), OS(os), FilePath(filePath) {
 }
 
-void june::Logger::Error(SourceLoc Loc, const std::function<void()>& Printer) {
+void june::Logger::ErrorInternal(SourceLoc Loc, SourceLoc MarkLoc, const c8* MarkMessage, const std::function<void()>& Printer) {
 
 	// Forward error message
 
@@ -97,6 +97,29 @@ void june::Logger::Error(SourceLoc Loc, const std::function<void()>& Printer) {
 	// Displaying where the error occured
 	OS << "\n";
 	OS << LNPad << "  |\n";
+
+	if (MarkMessage) {
+
+		OS << ' ' << MarkLoc.LineNumber;
+		OS << std::string(std::to_string(LargestLineNum).size() - std::to_string(LineNumber + MarkLoc.LineNumber).size(), ' ');
+		OS << " | ";
+
+		std::string MarkBetween   = ReplaceTabsWithSpaces(MarkLoc.Text);
+		std::string MarkBackwards = ReplaceTabsWithSpaces(RangeFromWindow(MarkLoc.Text.begin(), -40));
+		std::string MarkForwards  = ReplaceTabsWithSpaces(RangeFromWindow(MarkLoc.Text.begin() + MarkLoc.Text.size() - 1, +40));
+
+		OS << MarkBackwards << MarkBetween << MarkForwards << '\n';
+
+		OS << LNPad << "  | ";
+		SetTerminalColor(TerminalColorCyan);
+		
+		OS << std::string(MarkBackwards.size(), ' ');
+		OS << std::string(MarkBetween.size(), '-');
+		OS << " ";
+		OS << MarkMessage << '\n';
+		SetTerminalColor(TerminalColorDefault);
+		OS << LNPad << "  |\n";
+	}
 
 	std::string spaces = std::string(Backwards.size(), ' ');
 

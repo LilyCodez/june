@@ -198,7 +198,8 @@ YIELD_ERROR(Var)
 			}
 		}
 
-		CreateCast(Var->Assignment, Var->Ty);
+		AssignTo(Var->Assignment, Var->Ty, Var->Loc);
+
 	} else if (Var->Mods & mods::Mods::COMPTIME) {
 		VAR_YIELD(Error(Var, "Variables marked 'comptime' should be initialized"));
 	}
@@ -814,6 +815,13 @@ void june::Analysis::CheckIdentRefCommon(IdentRef* IRef, bool GivePrefToFuncs, F
 		IRef->Ty = Var->Ty;
 
 		CheckRecordsInType(IRef->Loc, Var->Ty);
+		if (Var->MemoryWasMoved) {
+			Log.ErrorWithMark(IRef->Loc, Var->MemoryMovedLoc,
+				"Value moved here",
+				"Cannot use variable '%s' after its memory was moved",
+				Var->Name);
+		}
+
 		break;
 	}
 	case IdentRef::FUNCS: {
@@ -916,13 +924,22 @@ void june::Analysis::CheckFuncCall(FuncCall* Call) {
 	Call->IsComptimeCompat = false; // TODO: Allow for comptime functions
 
 	// Checking arguments
+	bool ArgsHaveErrs = false;
 	for (Expr* Arg : Call->Args) {
 		CheckNode(Arg);
-		YIELD_ERROR_WHEN_M(Call, Arg);
+		if (Arg->Ty->is(Context.ErrorType)) {
+			ArgsHaveErrs = true;
+		}
 	}
 	for (FuncCall::NamedArg& NamedArg : Call->NamedArgs) {
 		CheckNode(NamedArg.AssignValue);
-		YIELD_ERROR_WHEN_M(Call, NamedArg.AssignValue);
+		if (NamedArg.AssignValue->Ty->is(Context.ErrorType)) {
+			ArgsHaveErrs = true;
+		}
+	}
+
+	if (ArgsHaveErrs) {
+		YIELD_ERROR(Call);
 	}
 
 	switch (Call->Site->Kind) {
@@ -989,7 +1006,7 @@ void june::Analysis::CheckFuncCall(FuncCall* Call) {
 		}
 
 		for (u32 i = 0; i < Call->Args.size(); i++) {
-			CreateCast(Call->Args[i], CalledFuncTy->ParamTypes[i]);
+			AssignTo(Call->Args[i], CalledFuncTy->ParamTypes[i], Call->Loc);
 		}
 
 		Call->Ty = CalledFuncTy->RetTy;
@@ -1152,10 +1169,10 @@ void june::Analysis::CheckFuncCall(FuncCall* Call) {
 	// TODO: VarArgs will require further work to get this to work right
 	// Ensuring that the arguments comply with the function
 	for (u32 i = 0; i < Call->Args.size(); i++) {
-		CreateCast(Call->Args[i], CalledFunc->Params[i]->Ty);
+		AssignTo(Call->Args[i], CalledFunc->Params[i]->Ty, Call->Loc);
 	}
 	for (FuncCall::NamedArg& NamedArg : Call->NamedArgs) {
-		CreateCast(NamedArg.AssignValue, CalledFunc->Params[NamedArg.VarRef->ParamIdx]->Ty);
+		AssignTo(NamedArg.AssignValue, CalledFunc->Params[NamedArg.VarRef->ParamIdx]->Ty, Call->Loc);
 	}
 
 	if (!Call->IsConstructorCall) {
@@ -1596,7 +1613,12 @@ YIELD_ERROR(BinOp)
 				YIELD_ERROR(BinOp);
 			}
 
-			CreateCast(BinOp->RHS, LTy);
+
+			if (BinOp->Op == '=') {
+				AssignTo(BinOp->LHS, LTy, BinOp->Loc);
+			} else {
+				CreateCast(BinOp->RHS, LTy);
+			}
 		}
 
 		BinOp->Ty = LTy;
@@ -2286,6 +2308,10 @@ bool june::Analysis::IsLValue(Expr* E) {
 	if (K == AstKind::IDENT_REF || K == AstKind::FIELD_ACCESSOR || K == AstKind::ARRAY_ACCESS) {
 		return true;
 	}
+	if (K == AstKind::FUNC_CALL) {
+		FuncCall* Call = ocast<FuncCall*>(E);
+		return Call->IsConstructorCall;
+	}
 	return false;
 }
 
@@ -2428,4 +2454,15 @@ bool june::Analysis::TypeNeedsDestructionAndGenDestructors(Type* Ty) {
 		return TypeNeedsDestructionAndGenDestructors(BaseTy);
 	}
 	return false;
+}
+
+void june::Analysis::AssignTo(Expr* Assignment, Type* ToTy, SourceLoc AssignLoc) {
+	if (Assignment->is(AstKind::IDENT_REF)) {
+		if (TypeNeedsDestructionAndGenDestructors(Assignment->Ty)) {
+			IdentRef* IRef = ocast<IdentRef*>(Assignment);
+			IRef->VarRef->MemoryWasMoved = true;
+			IRef->VarRef->MemoryMovedLoc = AssignLoc;
+		}
+	}
+	CreateCast(Assignment, ToTy);
 }

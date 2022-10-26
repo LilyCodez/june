@@ -200,7 +200,9 @@ int main() {
 	RunTest(SRC("destructors/Destructors11.june"), "Begin Destroyed!");
 	RunTest(SRC("destructors/Destructors12.june"), "Begin Destroyed!");
 	RunTest(SRC("destructors/Destructors13.june"), "Begin Destroyed!");
-	RunTest(SRC("destructors/Destructors14.june"), "Begin Destroyed(77) endof f() call Destroyed(55)");
+	RunTest(SRC("destructors/Destructors14.june"), "Begin Destroyed(0) Destroyed(77) Destroyed(55) ");
+	RunTest(SRC("destructors/Destructors15.june"), "Begin Destroyed(0) Destroyed(631) ");
+	RunTest(SRC("destructors/Destructors16.june"), "Begin Destroyed(631) Destroyed(0) ");
 
 	if (Succeeded + Failed > 0) {
 		llvm::outs() << "Passed/Tested (" << Succeeded << "/" << (Succeeded + Failed) << ")\n";

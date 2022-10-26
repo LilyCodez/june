@@ -81,6 +81,7 @@ namespace june {
 		llvm::Value* GenAlloca(VarDecl* Var);
 		
 		llvm::Value* GenRValue(AstNode* Node);
+		llvm::Value* GenRValue(AstNode* Node, llvm::Value* LLValue);
 
 		llvm::Value* GenInnerScope(InnerScopeStmt* InnerScope);
 		llvm::Value* GenReturn(ReturnStmt* Ret);
@@ -203,6 +204,8 @@ namespace june {
 	                             llvm::Value* LLArrStartPtr,
 	                             llvm::Value* LLTotalLinearLength,
 			                     const std::function<void(llvm::PHINode*, Type*)>& CodeGenCallback);
+
+		void MoveObjectIfNeeded(llvm::Value* LLAddr, Expr* Assignment);
 
 	};
 }

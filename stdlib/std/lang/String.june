@@ -113,6 +113,10 @@ String :: record {
 	empty() -> bool {
 		return length == 0;
 	}
+
+	~String() {
+		
+	}
 }
 
 from(i: i32) -> String {
@@ -147,10 +151,13 @@ from(i: i32) -> String {
 	return res;
 }
 
-concat(a: String, b: String) -> String {
-	totalLength: i32 = a.length + b.length;
-	newString: c8* = new c8[totalLength];
-	Mem.memcpy(newString, a.buffer, a.length);
-	Mem.memcpy(newString + a.length, b.buffer, b.length);
-	return String(newString, totalLength);
+concat(a: String*, b: String*) -> String {
+	newString := String();
+
+	newString.length = a.length + b.length;
+	newString.buffer = new c8[newString.length];
+	Mem.memcpy(newString.buffer, a.buffer, a.length);
+	Mem.memcpy(newString.buffer + a.length, b.buffer, b.length);
+
+	return newString;
 }

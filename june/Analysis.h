@@ -129,6 +129,8 @@ namespace june {
 		bool RequestRecordDestructionGen(RecordDecl* Record);
 		bool TypeNeedsDestructionAndGenDestructors(Type* Ty);
 	
+		void AssignTo(Expr* Assignment, Type* ToTy, SourceLoc AssignLoc);
+
 		void Error(AstNode* N, const c8* Msg) {
 			Log.Error(N->Loc, Msg);
 		}

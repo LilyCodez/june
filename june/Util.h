@@ -10,7 +10,8 @@ namespace june {
 	constexpr u32 TerminalColorRed       = 0xC;
 	constexpr u32 TerminalColorGreen     = 0x2;
 	constexpr u32 TerminalColorYellow    = 0x6;
-	constexpr u32 TerminalColorLightBlue = 0x3;
+	constexpr u32 TerminalColorLightBlue = 0x9;
+	constexpr u32 TerminalColorCyan      = 0xB;
 
 	void SetTerminalColor(u32 ColorId);
 

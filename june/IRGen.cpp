@@ -476,6 +476,9 @@ void june::IRGen::GenFuncBody(FuncDecl* Func) {
 		if (EmitDebugInfo)
 			GetDIEmitter(Func)->EmitParam(Func, Param, Builder);
 		Builder.CreateStore(LLFunc->getArg(LLParamIndex++), Param->LLAddress);
+		if (TypeNeedsDestruction(Param->Ty)) {
+			AddObjectToDestroy(Param->Ty, Param->LLAddress);
+		}
 	}
 
 	// If it is a constructor the fields need to be initialized early
@@ -515,6 +518,7 @@ void june::IRGen::GenFuncBody(FuncDecl* Func) {
 
 	llvm::Instruction* LLRet = nullptr;
 	if (Func->NumReturns > 1) {
+		CallDestructorsForRet();
 		if (HasVoidRetTy) {
 			LLRet = Builder.CreateRetVoid();
 		} else {
@@ -922,8 +926,11 @@ bool june::IRGen::TypeNeedsDestruction(Type* Ty) {
 }
 
 llvm::Value* june::IRGen::GenRValue(AstNode* Node) {
+	return GenRValue(Node, GenNode(Node));
+}
 
-	llvm::Value* LLValue = GenNode(Node);
+llvm::Value* june::IRGen::GenRValue(AstNode* Node, llvm::Value* LLValue) {
+
 	// Dereferencing any LValues
 	switch (Node->Kind) {
 	case AstKind::IDENT_REF:
@@ -1013,19 +1020,16 @@ llvm::Value* june::IRGen::GenReturn(ReturnStmt* Ret) {
 		return nullptr;
 	}
 
-	// TODO: Come back to, calling destructors here may lead
-	//       to overbearing imagine sizes due to repeated destrucor
-	//       calls.
 	if (Ret->Val && !ReturnViaRef) {
-		CallDestructorsForRet();
-		Builder.CreateStore(GenRValue(Ret->Val), LLRetAddr);
+		llvm::Value* LLMoveAddr = GenNode(Ret->Val);
+		Builder.CreateStore(GenRValue(Ret->Val, LLMoveAddr), LLRetAddr);
+		MoveObjectIfNeeded(LLMoveAddr, Ret->Val);
 	} else if (CFunc->IsMainFunc) {
-		CallDestructorsForRet();
 		Builder.CreateStore(GetLLInt32(0, LLContext), LLRetAddr);
 	} else if (ReturnViaRef) {
-		llvm::Value* LLStructToBeAssigned = GenNode(Ret->Val);
-		CallDestructorsForRet(LLStructToBeAssigned);
-		GenStoreRetStructRes(Ret->Val, LLStructToBeAssigned);
+		llvm::Value* LLMoveAddr = GenNode(Ret->Val);
+		GenStoreRetStructRes(Ret->Val, LLMoveAddr);
+		MoveObjectIfNeeded(LLMoveAddr, Ret->Val);
 	}
 	EmitDebugLocation(Ret); // storage
 	Builder.CreateBr(LLFuncEndBB);
@@ -1429,10 +1433,14 @@ llvm::Value* june::IRGen::GenFuncCall(llvm::Value* LLAddr, FuncCall* Call) {
 
 	for (u32 i = 0; i < Call->Args.size(); i++) {
 		Expr* Arg = Call->Args[i];
-		LLArgs[ArgIndex++] = GenRValue(Arg);
+		llvm::Value* LLMoveAddr = GenNode(Arg);
+		LLArgs[ArgIndex++] = GenRValue(Arg, LLMoveAddr);
+		MoveObjectIfNeeded(LLMoveAddr, Arg);
 	}
 	for (FuncCall::NamedArg& NamedArg : Call->NamedArgs) {
-		LLArgs[NamedArg.VarRef->ParamIdx] = GenRValue(NamedArg.AssignValue);
+		llvm::Value* LLMoveAddr = GenNode(NamedArg.AssignValue);
+		LLArgs[NamedArg.VarRef->ParamIdx] = GenRValue(NamedArg.AssignValue, LLMoveAddr);
+		MoveObjectIfNeeded(LLMoveAddr, NamedArg.AssignValue);
 	}
 
 	llvm::Value* CallValue = nullptr;
@@ -2133,6 +2141,7 @@ llvm::Value* june::IRGen::GenTuple(Tuple* Tup, llvm::Value* LLAddr) {
 
 llvm::Value* june::IRGen::GenAssignment(llvm::Value* LLAddr, Expr* Val) {
 	llvm::Value* LLRValToStore = nullptr;
+	llvm::Value* LLMoveAddr = nullptr;
 	if (Val->Kind == AstKind::ARRAY) {
 		llvm::Value* LLArr = GenArray(ocast<Array*>(Val), LLAddr);
 		if (Val->CastTy) {
@@ -2156,19 +2165,15 @@ llvm::Value* june::IRGen::GenAssignment(llvm::Value* LLAddr, Expr* Val) {
 	} else if (Val->Kind == AstKind::TUPLE) {
 		GenTuple(ocast<Tuple*>(Val), LLAddr);
 	} else {
-		LLRValToStore = GenRValue(Val);
+		LLMoveAddr = GenNode(Val);
+		LLRValToStore = GenRValue(Val, LLMoveAddr);
 	}
 	if (LLRValToStore) {
-		if (Val->is(AstKind::IDENT_REF) || Val->is(AstKind::FIELD_ACCESSOR)) {
-			if (TypeNeedsDestruction(Val->Ty)) {
-				// Movement of object.
-				if (Val->Ty->GetKind() == TypeKind::RECORD) {
-					
-				}
-			}
-		}
 		Builder.CreateStore(LLRValToStore, LLAddr);
 		EmitDebugLocation(Val);
+		if (LLMoveAddr) {
+			MoveObjectIfNeeded(LLMoveAddr, Val);
+		}
 	}
 	return LLAddr;
 }
@@ -2876,4 +2881,10 @@ void june::IRGen::GenInteralArrayLoop(FixedArrayType* ArrTy,
 
 	// End of loop
 	Builder.SetInsertPoint(LoopEndBB);
+}
+
+void june::IRGen::MoveObjectIfNeeded(llvm::Value* LLAddr, Expr* Assignment) {
+	if (TypeNeedsDestruction(Assignment->Ty)) {
+		GenDefaultValue(Assignment->Ty, LLAddr);
+	}
 }

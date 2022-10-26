@@ -237,8 +237,11 @@ namespace june {
 		FuncDecl*   Func   = nullptr;
 		u32 FieldIdx = -1;
 		u32 ParamIdx = -1;
-		bool UsesInferedType = false;
-		bool IsGlobal        = false;
+		bool UsesInferedType         = false;
+		bool IsGlobal                = false;
+		bool MemoryWasMoved          = false;
+		SourceLoc MemoryMovedLoc; // Set when MemoryWasMoved is set to true.
+
 		llvm::StringRef NativeName;
 
 		VarDecl() : Decl(AstKind::VAR_DECL) {}
