@@ -90,7 +90,8 @@ void june::Analysis::ResolveRecordTypes(JuneContext& Context, FileUnit* FU) {
 		}
 
 		if (!FoundRecord) {
-			FU->Log.Error(URT.ErrorLoc, "Could not find record type '%s'", RelRecLoc.ToStr());
+			FU->Log.BeginError(URT.ErrorLoc, "Could not find record type '%s'", RelRecLoc.ToStr());
+			FU->Log.EndError();
 		} else {
 			URT.RecType->Record = FoundRecord;
 		}
@@ -106,8 +107,9 @@ void june::Analysis::CheckRecords(JuneContext& Context, FileUnit* FU) {
 
 void june::Analysis::ReportInvalidFUStmts(FileUnit* FU) {
 	for (auto& [Kind, InvalidStmt] : FU->InvalidStmts) {
-		FU->Log.Error(InvalidStmt->Loc, "Invalid statement at %s scope",
+		FU->Log.BeginError(InvalidStmt->Loc, "Invalid statement at %s scope",
 			Kind == FileUnit::StmtScopeKind::GLOBAL ? "global" : "record");
+		FU->Log.EndError();
 	}
 }
 
@@ -344,6 +346,7 @@ void june::Analysis::CheckScope(const LexScope& LScope, Scope& NewScope) {
 		case AstKind::FUNC_CALL:
 		case AstKind::BREAK:
 		case AstKind::CONTINUE:
+		case AstKind::DELETE:
 			break;
 		case AstKind::BINARY_OP:
 			switch (ocast<BinaryOp*>(Stmt)->Op) {
@@ -417,6 +420,9 @@ void june::Analysis::CheckNode(AstNode* Node) {
 	case AstKind::CONTINUE:
 	case AstKind::BREAK:
 		CheckLoopControl(ocast<LoopControlStmt*>(Node));
+		break;
+	case AstKind::DELETE:
+		CheckDelete(ocast<DeleteStmt*>(Node));
 		break;
 	case AstKind::IDENT_REF:
 		CheckIdentRef(ocast<IdentRef*>(Node), false);
@@ -628,12 +634,13 @@ bool june::Analysis::CheckIf(IfStmt* If) {
 	return AllPathsReturn;
 }
 
-void june::Analysis::CheckCond(Expr* Cond, const SourceLoc& ExpandedCondLoc, const c8* PreText) {
+void june::Analysis::CheckCond(Expr* Cond, SourceLoc ExpandedCondLoc, const c8* PreText) {
 	CheckNode(Cond);
 	if (Cond->Ty->isNot(Context.ErrorType)) {
 		if (!IsComparable(Cond->Ty)) {
-			Log.Error(ExpandedCondLoc,
-				"%s condition expected to be type 'bool', but found type '%s'", PreText, Cond->Ty->ToStr());
+			Error(ExpandedCondLoc,
+				"%s condition expected to be type 'bool', but found type '%s'",
+				PreText, Cond->Ty->ToStr());
 		}
 	}
 }
@@ -658,6 +665,15 @@ void june::Analysis::CheckLoopControl(LoopControlStmt* LoopControl) {
 		} else {
 			Error(LoopControl, "number of requested continues exceeds the loop depth");
 		}
+	}
+}
+
+void june::Analysis::CheckDelete(DeleteStmt* Delete) {
+	CheckNode(Delete->Val);
+	YIELD_ERROR_WHEN(Delete->Val);
+
+	if (Delete->Val->Ty->GetKind() != TypeKind::POINTER) {
+		Error(Delete, "Cannot delete type '%s'", Delete->Val->Ty->ToStr());
 	}
 }
 
@@ -816,10 +832,10 @@ void june::Analysis::CheckIdentRefCommon(IdentRef* IRef, bool GivePrefToFuncs, F
 
 		CheckRecordsInType(IRef->Loc, Var->Ty);
 		if (Var->MemoryWasMoved) {
-			Log.ErrorWithMark(IRef->Loc, Var->MemoryMovedLoc,
-				"Value moved here",
-				"Cannot use variable '%s' after its memory was moved",
-				Var->Name);
+			Log.BeginError(IRef->Loc, "Cannot use variable '%s' after its memory was moved");
+			AddMarkErrorMsgAboutBindLoc();
+			Log.AddMarkErrorMsg(Var->MemoryMovedLoc, "Value moved here");
+			Log.EndError();
 		}
 
 		break;
@@ -1013,9 +1029,7 @@ void june::Analysis::CheckFuncCall(FuncCall* Call) {
 		return;
 	}
 
-	switch (Site->Kind) {
-	case AstKind::IDENT_REF:
-	case AstKind::FIELD_ACCESSOR: {
+	if (Site->Kind == AstKind::IDENT_REF || Site->Kind == AstKind::FIELD_ACCESSOR) {
 		IdentRef* IRef = ocast<IdentRef*>(Site);
 		switch (IRef->RefKind) {
 		case IdentRef::FUNCS:
@@ -1044,8 +1058,17 @@ void june::Analysis::CheckFuncCall(FuncCall* Call) {
 		default:
 			break;
 		}
-		break;
-	}
+	} else if (Site->Kind == AstKind::HEAP_ALLOC_TYPE) {
+		HeapAllocType* HeapAlloc = ocast<HeapAllocType*>(Site);
+		if (HeapAlloc->TypeToAlloc->GetKind() == TypeKind::RECORD) {
+			Call->IsConstructorCall = true;
+			ConstructorRecord = HeapAlloc->TypeToAlloc->AsRecordType()->Record;
+			Canidates = &ConstructorRecord->Constructors;
+		} else {
+			Error(Call, "Cannot make a heap allocation call for type '%s'",
+				HeapAlloc->TypeToAlloc->ToStr());
+			YIELD_ERROR(Call);
+		}
 	}
 
 	if (ConstructorRecord) {
@@ -1114,9 +1137,18 @@ void june::Analysis::CheckFuncCall(FuncCall* Call) {
 	}
 
 	TypeBindList TypeBindings;
+
 	if (CalledFunc->is(AstKind::GENERIC_FUNC_DECL)) {
+		TypeBindings.OriginalBindingLoc = Call->Loc;
+		TypeBindings.OriginalFileFU = FU;
+		if (CFunc->is(AstKind::GENERIC_FUNC_DECL)) {
+			GenericFuncDecl* GenFunc = ocast<GenericFuncDecl*>(CFunc);
+			TypeBindings.RecursiveCallGenericFunc = GenFunc;
+			TypeBindings.RecursiveCallBindingId   = GenFunc->CurBindingId;
+		}
+		
 		GenericFuncDecl* GenFunc = ocast<GenericFuncDecl*>(CalledFunc);
-		TypeBindings.reserve(GenFunc->GenericTypes.size());
+		TypeBindings.List.reserve(GenFunc->GenericTypes.size());
 
 		// Generating the type bindings.
 		for (u32 i = 0; i < Call->Args.size(); i++) {
@@ -1127,7 +1159,7 @@ void june::Analysis::CheckFuncCall(FuncCall* Call) {
 					// Unboxing is good here since if the function being called from
 					// has generics those types should already have been binded during
 					// its check.
-					TypeBindings.push_back(
+					TypeBindings.List.push_back(
 						std::make_tuple(GenTy->Name, Call->Args[i]->Ty->UnboxGeneric()));
 				}
 			}
@@ -1137,13 +1169,13 @@ void june::Analysis::CheckFuncCall(FuncCall* Call) {
 			if (ParamTy->isGeneric()) {
 				GenericType* GenTy = ParamTy->AsGenericType();
 				if (!IsGenericTypeNameBound(TypeBindings, GenTy->Name)) {
-					TypeBindings.push_back(
+					TypeBindings.List.push_back(
 						std::make_tuple(GenTy->Name, NamedArg.AssignValue->Ty->UnboxGeneric()));
 				}
 			}
 		}
 
-		if (TypeBindings.size() != GenFunc->GenericTypes.size()) {
+		if (TypeBindings.List.size() != GenFunc->GenericTypes.size()) {
 			// There are unbound types.
 			std::string UnboundTypesNames = "";
 			for (auto [GenName, GenType] : GenFunc->GenericTypes) {
@@ -1169,16 +1201,19 @@ void june::Analysis::CheckFuncCall(FuncCall* Call) {
 	// TODO: VarArgs will require further work to get this to work right
 	// Ensuring that the arguments comply with the function
 	for (u32 i = 0; i < Call->Args.size(); i++) {
-		AssignTo(Call->Args[i], CalledFunc->Params[i]->Ty, Call->Loc);
+		AssignTo(Call->Args[i], CalledFunc->Params[i]->Ty->UnboxGeneric(), Call->Loc);
 	}
 	for (FuncCall::NamedArg& NamedArg : Call->NamedArgs) {
-		AssignTo(NamedArg.AssignValue, CalledFunc->Params[NamedArg.VarRef->ParamIdx]->Ty, Call->Loc);
+		AssignTo(NamedArg.AssignValue, CalledFunc->Params[NamedArg.VarRef->ParamIdx]->Ty->UnboxGeneric(), Call->Loc);
 	}
 
 	if (!Call->IsConstructorCall) {
 		Call->Ty = CalledFunc->RetTy->UnboxGeneric();
 	} else {
 		Call->Ty = GetRecordType(ConstructorRecord);
+		if (Call->Site->is(AstKind::HEAP_ALLOC_TYPE)) {
+			Call->Ty = PointerType::Create(Call->Ty, Context);
+		}
 	}
 
 	Call->CalledFunc = CalledFunc;
@@ -1227,7 +1262,7 @@ void june::Analysis::CheckDefaultRecordInitFuncCall(FuncCall* Call, RecordDecl* 
 			NamedArg.VarRef = it->second;
 			ConsumedArgs.insert(FieldIdx);
 		} else {
-			Log.Error(NamedArg.Loc, "No field in record '%s' by name '%s'",
+			Error(NamedArg.Loc, "No field in record '%s' by name '%s'",
 				Record->Name, NamedArg.Name.Text);
 			continue;
 		}
@@ -1245,6 +1280,9 @@ void june::Analysis::CheckDefaultRecordInitFuncCall(FuncCall* Call, RecordDecl* 
 	}
 
 	Call->Ty = GetRecordType(Record);
+	if (Call->Site->is(AstKind::HEAP_ALLOC_TYPE)) {
+		Call->Ty = PointerType::Create(Call->Ty, Context);
+	}
 }
 
 void june::Analysis::DisplayErrorForNamedArgsSlotTaken(FuncCall* Call, bool UseFieldIdx) {
@@ -2310,7 +2348,8 @@ bool june::Analysis::IsLValue(Expr* E) {
 	}
 	if (K == AstKind::FUNC_CALL) {
 		FuncCall* Call = ocast<FuncCall*>(E);
-		return Call->IsConstructorCall;
+		TypeKind TK = Call->Ty->GetKind();
+		return TK == TypeKind::POINTER || TK == TypeKind::RECORD;
 	}
 	return false;
 }
@@ -2322,13 +2361,13 @@ bool june::Analysis::IsComparable(Type* Ty) {
 void june::Analysis::EnsureChecked(SourceLoc ELoc, VarDecl* Var) {
 	if (Var->IsBeingChecked) {
 		if (CField) {
-			Log.Error(ELoc, "Fields form a circular dependency");
+			Error(ELoc, "Fields form a circular dependency");
 			DisplayCircularDep(CField);
 		} else if (CGlobal) {
-			Log.Error(ELoc, "Global variables form a circular depedency");
+			Error(ELoc, "Global variables form a circular depedency");
 			DisplayCircularDep(CGlobal);
 		} else {
-			Log.Error(ELoc, "Cannot access a local variable while it is being declared");
+			Error(ELoc, "Cannot access a local variable while it is being declared");
 		}
 		Var->Ty = Context.ErrorType;
 		return;
@@ -2354,7 +2393,7 @@ void june::Analysis::EnsureChecked(SourceLoc ELoc, RecordDecl* Record) {
 		RequestRecordDestructionGen(Record);
 	} else {
 		if (Record->IsBeingChecked) {
-			Log.Error(ELoc, "Records form a circular dependency");
+			Error(ELoc, "Records form a circular dependency");
 			DisplayCircularDep(CRecord);
 			return;
 		}

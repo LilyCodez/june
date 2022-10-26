@@ -2,5 +2,5 @@ import std.Sys;
 
 main() {
 	Sys.println("Hello World!");
-	Sys.println(String("Omg it works! :D"));
+	Sys.println(&String("Omg it works! :D"));
 }

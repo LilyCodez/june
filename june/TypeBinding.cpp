@@ -9,12 +9,14 @@ void june::BindTypes(GenericFuncDecl* GenFunc, u32 BindingId) {
 	PrevBindingIdStack.push(GenFunc->CurBindingId);
 	TypeBindList& Bindings = std::get<0>(GenFunc->BindingCache[BindingId]);
 
-	for (auto& Binding : Bindings) {
+	for (auto& Binding : Bindings.List) {
 		GenericType* GenTy = GenFunc->GenericTypes.find(std::get<0>(Binding))->second;
 		// -- DEBUG
 		// llvm::outs() << "Binding '" << GenTy->Name << "' with type '" << std::get<1>(Binding)->ToStr() << "'\n";
 		GenTy->Bind(std::get<1>(Binding));
 	}
+
+	GenFunc->CurBindingId = BindingId;
 }
 
 void june::UnbindTypes(GenericFuncDecl* GenFunc) {
@@ -26,26 +28,27 @@ void june::UnbindTypes(GenericFuncDecl* GenFunc) {
 		}
 	} else {
 		TypeBindList& PrevBindings = std::get<0>(GenFunc->BindingCache[PrevBindingId]);
-		for (auto& Binding : PrevBindings) {
+		for (auto& Binding : PrevBindings.List) {
 			GenericType* GenTy = GenFunc->GenericTypes.find(std::get<0>(Binding))->second;
 			GenTy->Bind(std::get<1>(Binding));
 		}
 	}
+	GenFunc->CurBindingId = PrevBindingId;
 }
 
 bool june::IsGenericTypeNameBound(TypeBindList& Bindings, Identifier GenericName) {
-	auto it = std::find_if(Bindings.begin(), Bindings.end(), [=](std::tuple<Identifier, Type*>& Binding) {
+	auto it = std::find_if(Bindings.List.begin(), Bindings.List.end(), [=](std::tuple<Identifier, Type*>& Binding) {
 			return std::get<0>(Binding) == GenericName;
 		});
-	return it != Bindings.end();
+	return it != Bindings.List.end();
 }
 
 u32 june::GetBindingsId(GenericFuncDecl* GenFunc, TypeBindList& Bindings) {
 	u32 BindingId = 0;
 	for (auto& BindingPair : GenFunc->BindingCache) {
 		TypeBindList& Binding = std::get<0>(BindingPair);
-		if (std::equal(Bindings.begin(), Bindings.end(),
-			           Binding.begin(),
+		if (std::equal(Bindings.List.begin(), Bindings.List.end(),
+			           Binding.List.begin(),
 			[](std::tuple<Identifier, Type*>& LHS, std::tuple<Identifier, Type*>& RHS) {
 				return std::get<0>(LHS) == std::get<0>(RHS) &&
 					   std::get<1>(LHS)->is(std::get<1>(RHS));
@@ -92,6 +95,11 @@ namespace june {
 			for (AstNode* Stmt : Func->Scope.Stmts) {
 				ResetNode(Stmt);
 			}
+			break;
+		}
+		case AstKind::DELETE: {
+			DeleteStmt* Delete = ocast<DeleteStmt*>(Node);
+			ResetNode(Delete->Val);
 			break;
 		}
 		case AstKind::VAR_DECL: {

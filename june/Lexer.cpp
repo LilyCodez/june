@@ -493,7 +493,7 @@ bool june::Lexer::ParsePredirectiveCond() {
 			return false;
 #endif
 		} else {
-			Log.Error(Tok.Loc, "Unknown preprocessor variable");
+			Error(Tok.Loc, "Unknown preprocessor variable");
 			EatLine();
 			return false;
 		}
@@ -502,7 +502,7 @@ bool june::Lexer::ParsePredirectiveCond() {
 	} else if (Tok.is(TokenKind::KW_FALSE)) {
 		return false;
 	} else {
-		Log.Error(Tok.Loc, "Unexpected token for preprocessor expression");
+		Error(Tok.Loc, "Unexpected token for preprocessor expression");
 		EatLine();
 		return false;
 	}

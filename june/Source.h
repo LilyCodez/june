@@ -47,7 +47,8 @@ namespace june {
 		//
 		// Pattern: (ident '.')* ident
 		std::string PathKey;
-
+		// The path used for displaying error messages.
+		std::string ErrorPathKey;
 	};
 }
 

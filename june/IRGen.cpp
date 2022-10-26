@@ -189,6 +189,11 @@ llvm::Type* june::GenType(JuneContext& Context, Type* Ty) {
 		return LLStructTy;
 	}
 	default:
+		if (Ty->GetKind() == TypeKind::GENERIC_TYPE) {
+			llvm::errs() << "FAILED TO PROPERLY BIND GENERIC TYPE!\n";
+			llvm::errs() << "NOT BOUND FOR: " << Ty->ToStr() << '\n';
+		}
+
 		assert(!"Unimplemented GenType() case");
 		return nullptr;
 	}
@@ -255,6 +260,9 @@ void june::IRGen::GenFunc(FuncDecl* Func) {
 
 void june::IRGen::GenGenericFunc(GenericFuncDecl* Func, u32 BindingId) {
 	
+	// -- DEBUG
+	// llvm::outs() << "generating generic function: " << Func->Name << '\n';
+
 	CFunc = Func;
 	
 	BindTypes(Func, BindingId);
@@ -691,6 +699,8 @@ llvm::Value* june::IRGen::GenNode(AstNode* Node) {
 	case AstKind::CONTINUE:
 	case AstKind::BREAK:
 		return GenLoopControl(ocast<LoopControlStmt*>(Node));
+	case AstKind::DELETE:
+		return GenDelete(ocast<DeleteStmt*>(Node));
 	case AstKind::IDENT_REF:
 		return GenIdentRef(ocast<IdentRef*>(Node));
 	case AstKind::FIELD_ACCESSOR:
@@ -1258,6 +1268,17 @@ llvm::Value* june::IRGen::GenLoopControl(LoopControlStmt* LoopControl) {
 	return nullptr;
 }
 
+llvm::Value* june::IRGen::GenDelete(DeleteStmt* Delete) {
+	llvm::Value* LLValue = GenRValue(Delete->Val);
+	Type* ElmTy = Delete->Val->Ty->AsPointerType()->ElmTy;
+	if (TypeNeedsDestruction(ElmTy)) {
+		CallDestructors(ElmTy, LLValue);
+	}
+	llvm::Value* LLFree = llvm::CallInst::CreateFree(LLValue, Builder.GetInsertBlock());
+	Builder.Insert(LLFree);
+	return nullptr;
+}
+
 llvm::Value* june::IRGen::GenIdentRef(IdentRef* IRef) {
 	if (IRef->VarRef->Mods & mods::Mods::COMPTIME) {
 		VarDecl* Var = IRef->VarRef;
@@ -1344,6 +1365,11 @@ llvm::Value* june::IRGen::GenFuncCall(llvm::Value* LLAddr, FuncCall* Call) {
 		return GenLLVMIntrinsicCall(Call);
 	}
 
+	// Something like:   new String("Hello World!");
+	if (Call->Site->is(AstKind::HEAP_ALLOC_TYPE)) {
+		LLAddr = GenRValue(Call->Site);
+	}
+
 	if (Call->IsConstructorCall && !LLAddr) {
 		// Need to create a temporary object
 		LLAddr = CreateTempAlloca(GenType(Call->Ty));
@@ -1370,7 +1396,14 @@ llvm::Value* june::IRGen::GenFuncCall(llvm::Value* LLAddr, FuncCall* Call) {
 			llvm::Value* LLFieldAddr = CreateStructGEP(LLAddr, NamedArg.VarRef->FieldIdx);
 			GenAssignment(LLFieldAddr, NamedArg.AssignValue);
 		}
-		RecordDecl* Record = Call->Ty->AsRecordType()->Record;
+
+		RecordDecl* Record = nullptr;
+		if (Call->Ty->GetKind() == TypeKind::POINTER) {
+			// If heap allocating it might be a pointer
+			Record = Call->Ty->AsPointerType()->ElmTy->AsRecordType()->Record;
+		} else {
+			Record = Call->Ty->AsRecordType()->Record;
+		}
 		for (VarDecl* Field : Record->FieldsByIdxOrder) {
 			if (FieldIndexesWithVals.find(Field->FieldIdx) == FieldIndexesWithVals.end()) {
 				llvm::Value* LLFieldAddr = CreateStructGEP(LLAddr, Field->FieldIdx);
@@ -2158,7 +2191,10 @@ llvm::Value* june::IRGen::GenAssignment(llvm::Value* LLAddr, Expr* Val) {
 		if (Call->IsConstructorCall || 
 			(Call->CalledFunc && FuncNeedsRetViaRef(Call->CalledFunc))
 			) {
-			GenFuncCall(LLAddr, Call);
+			llvm::Value* FuncCallVal = GenFuncCall(LLAddr, Call);
+			if (Call->Site->is(AstKind::HEAP_ALLOC_TYPE)) {
+				LLRValToStore = FuncCallVal;
+			}
 		} else {
 			LLRValToStore = GenRValue(Val);
 		}
@@ -2169,6 +2205,9 @@ llvm::Value* june::IRGen::GenAssignment(llvm::Value* LLAddr, Expr* Val) {
 		LLRValToStore = GenRValue(Val, LLMoveAddr);
 	}
 	if (LLRValToStore) {
+		// -- DEBUG
+		// llvm::outs() << "LLRValToStore Type: " << LLValTypePrinter(LLRValToStore) << '\n';
+		// llvm::outs() << "LLAddr Type: " << LLValTypePrinter(LLAddr) << '\n';
 		Builder.CreateStore(LLRValToStore, LLAddr);
 		EmitDebugLocation(Val);
 		if (LLMoveAddr) {

@@ -86,6 +86,7 @@ namespace june {
 		PredicateLoopStmt* ParsePredicateLoop(Token LoopTok);
 		IfStmt* ParseIf();
 		LoopControlStmt* ParseLoopControl();
+		DeleteStmt* ParseDelete();
 
 		//===-------------------------------===//
 		// Expressions
@@ -141,21 +142,25 @@ namespace june {
 		void CheckFuncRedeclaration(FuncsList& Funcs, FuncDecl* Func);
 	
 		void Error(Token Tok, const c8* Msg) {
-			Log.Error(Tok.Loc, Msg);
-		}
-
-		void Error(SourceLoc Loc, const c8* Msg) {
-			Log.Error(Loc, Msg);
+			Log.BeginError(Tok.Loc, Msg);
+			Log.EndError();
 		}
 
 		template<typename... Targs>
 		void Error(Token Tok, const c8* Fmt, Targs&&... Args) {
-			Log.Error(Tok.Loc, Fmt, std::forward<Targs>(Args)...);
+			Log.BeginError(Tok.Loc, Fmt, std::forward<Targs>(Args)...);
+			Log.EndError();
+		}
+
+		void Error(SourceLoc Loc, const c8* Msg) {
+			Log.BeginError(Loc, Msg);
+			Log.EndError();
 		}
 
 		template<typename... Targs>
 		void Error(SourceLoc Loc, const c8* Fmt, Targs&&... Args) {
-			Log.Error(Loc, Fmt, std::forward<Targs>(Args)...);
+			Log.BeginError(Loc, Fmt, std::forward<Targs>(Args)...);
+			Log.EndError();
 		}
 	};
 }

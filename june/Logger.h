@@ -22,27 +22,24 @@ namespace june {
 
 		Logger(const SourceBuf& buf, llvm::raw_ostream& os, const std::string& filePath);
 
-		void Error(SourceLoc Loc, const c8* Msg) {
-			ErrorInternal(Loc, {}, nullptr, [&]() { OS << Msg; });
-		}
-
-		void ErrorWithMark(SourceLoc Loc, SourceLoc MarkLoc, const c8* MarkMsg, const c8* Msg) {
-			ErrorInternal(Loc, MarkLoc, MarkMsg, [&]() { OS << Msg; });
+		void BeginError(SourceLoc Loc, const c8* Msg) {
+			PrimaryErrLoc = Loc;
+			InternalErrorHeader(Loc, [&]() { OS << Msg; });
 		}
 
 		template<typename... Targs>
-		void ErrorWithMark(SourceLoc Loc, SourceLoc MarkLoc, const c8* MarkMsg, const c8* Fmt, Targs&&... Args) {
-			ErrorInternal(Loc, MarkLoc, MarkMsg, [&]() {
+		void BeginError(SourceLoc Loc, const c8* Fmt, Targs&&... Args) {
+			PrimaryErrLoc = Loc;
+			InternalErrorHeader(Loc, [&]() { 
 				ForwardFmt(OS, Fmt, std::forward<Targs>(Args)...);
 				});
 		}
 
-		template<typename... Targs>
-		void Error(SourceLoc Loc, const c8* Fmt, Targs&&... Args) {
-			ErrorInternal(Loc, SourceLoc{}, nullptr, [&]() {
-				ForwardFmt(OS, Fmt, std::forward<Targs>(Args)...);
-				});
-		}
+		void AddMarkErrorMsg(SourceLoc Loc, const std::string& Msg);
+
+		void AddMarkErrorMsg(const std::string& FilePath, SourceLoc Loc, const std::string& Msg);
+
+		void EndError();
 
 		static void GlobalError(llvm::raw_ostream& OS, const c8* Msg) {
 			GlobalError(OS, [&]() { OS << Msg; });
@@ -94,9 +91,24 @@ namespace june {
 		const SourceBuf&   Buf;
 		llvm::raw_ostream& OS;
 		const std::string  FilePath;
-		std::string        LNPad;
 
-		void ErrorInternal(SourceLoc Loc, SourceLoc MarkLoc, const c8* MarkMessage, const std::function<void()>& Printer);
+		std::string        LNPad;
+		u32                LargestLineNum = 0;
+
+		struct MarkMsg {
+			std::string FilePath;
+			SourceLoc   Loc;
+			std::string Message;
+		};
+
+		SourceLoc PrimaryErrLoc;
+		llvm::SmallVector<MarkMsg> MarkMsgs;
+
+		void InternalErrorHeader(SourceLoc Loc, const std::function<void()>& Printer);
+
+		void DisplayMarkError(MarkMsg& Msg);
+
+		void DisplayPrimaryError(const std::vector<std::string>& BetweenLines, bool BetweenTooBig);
 
 		static void GlobalError(llvm::raw_ostream& OS, const std::function<void()>& Printer);
 

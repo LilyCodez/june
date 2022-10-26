@@ -52,6 +52,7 @@ namespace june {
 			KW_IN,
 			KW_THIS,
 			KW_NEW,
+			KW_DELETE,
 			KW_CAST,
 			KW_SIZEOF,
 			KW_RECORD,

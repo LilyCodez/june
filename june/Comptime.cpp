@@ -31,8 +31,9 @@ void june::ComptimeGen::ComputeArrayDimSize(ComptimeValue& CV) {
 	}
 
 	if (!AT->LengthAsExpr->IsComptimeCompat) {
-		CV.Log.Error(AT->LengthAsExpr->Loc,
+		CV.Log.BeginError(AT->LengthAsExpr->Loc,
 			"Array's declared length must be able to be computed at compilation time");
+		CV.Log.EndError();
 		return;
 	}
 
@@ -41,18 +42,21 @@ void june::ComptimeGen::ComputeArrayDimSize(ComptimeValue& CV) {
 	llvm::Constant* LLLength = llvm::cast<llvm::Constant>(Gen.GenNode(AT->LengthAsExpr));
 
 	if (!AT->LengthAsExpr->Ty->isInt()) {
-		CV.Log.Error(AT->LengthAsExpr->Loc, "Array's declared length must be an integer");
+		CV.Log.BeginError(AT->LengthAsExpr->Loc, "Array's declared length must be an integer");
+		CV.Log.EndError();
 		return;
 	}
 	llvm::ConstantInt* LLLengthAsInt = llvm::cast<llvm::ConstantInt>(LLLength);
 	if (LLLengthAsInt->isNegative()) {
-		CV.Log.Error(AT->LengthAsExpr->Loc, "Declared length of an array cannot be negative");
+		CV.Log.BeginError(AT->LengthAsExpr->Loc, "Declared length of an array cannot be negative");
+		CV.Log.EndError();
 		return;
 	}
 
 	AT->Length = LLLengthAsInt->getZExtValue();
 
 	if (AT->Length == 0) {
-		CV.Log.Error(AT->LengthAsExpr->Loc, "Declared length of an array cannot be zero");
+		CV.Log.BeginError(AT->LengthAsExpr->Loc, "Declared length of an array cannot be zero");
+		CV.Log.EndError();
 	}
 }

@@ -42,12 +42,12 @@ print(msg: c8*) {
 	print(msg, Mem.strlen(msg));
 }
 
-print(msg: String) {
+print(msg: String*) {
 	print(msg.buffer, msg.length);
 }
 
 print(i: i32) {
-	print(String.from(i));
+	print(&String.from(i));
 }
 
 println() {

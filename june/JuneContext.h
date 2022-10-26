@@ -99,8 +99,8 @@ namespace june {
 		Identifier LengthIdentifier;
 
 		struct DeclGen {
-			u32   TypeBindingId;
-			Decl* D;
+			u32       TypeBindingId;
+			Decl*     D;
 		};
 
 		std::queue<DeclGen>       QuededDeclsToGen;

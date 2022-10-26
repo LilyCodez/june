@@ -115,7 +115,7 @@ String :: record {
 	}
 
 	~String() {
-		
+		delete buffer;
 	}
 }
 

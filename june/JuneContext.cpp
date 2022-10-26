@@ -151,6 +151,7 @@ void june::JuneContext::Init(bool EmitDebugInfo) {
 
 	TokenKeywordMap.insert({ "in"      , TokenKind::KW_IN        });
 	TokenKeywordMap.insert({ "this"    , TokenKind::KW_THIS      });
+	TokenKeywordMap.insert({ "delete"  , TokenKind::KW_DELETE    });
 	TokenKeywordMap.insert({ "new"     , TokenKind::KW_NEW       });
 	TokenKeywordMap.insert({ "cast"    , TokenKind::KW_CAST      });
 	TokenKeywordMap.insert({ "if"      , TokenKind::KW_IF        });

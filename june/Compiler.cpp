@@ -345,6 +345,7 @@ void june::Compiler::CollectDirectoryFiles(const std::filesystem::path& Director
 void june::Compiler::AddFileUnit(const std::string& RelativePath, const std::string& AbsolutePath) {
 	
 	FileUnit* FU = new FileUnit(llvm::errs(), RelativePath);
+	FU->FL.ErrorPathKey = RelativePath;
 	if (EmitDebugInfo) {
 		FU->DIEmitter = new DebugInfoEmitter(Context);
 	}

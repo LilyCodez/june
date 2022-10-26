@@ -83,14 +83,21 @@ namespace june {
 			return llvm::StringRef(TokStart, CurPtr - TokStart);
 		}
 
+		void Error(SourceLoc Loc, const c8* Msg) {
+			Log.BeginError(Loc, Msg);
+			Log.EndError();
+		}
+
 		void Error(const c8* CharPos, const c8* Msg) {
-			Log.Error(SourceLoc{ llvm::StringRef(CharPos, 1), LineNumber }, Msg);
+			Log.BeginError(SourceLoc{ llvm::StringRef(CharPos, 1), LineNumber }, Msg);
+			Log.EndError();
 		}
 
 		template<typename... Targs>
 		void Error(const c8* CharPos, const c8* Fmt, Targs&&... Args) {
-			Log.Error(SourceLoc{ llvm::StringRef(CharPos, 1), LineNumber },
+			Log.BeginError(SourceLoc{ llvm::StringRef(CharPos, 1), LineNumber },
 				Fmt, std::forward<Targs>(Args)...);
+			Log.EndError();
 		}
 	};
 }

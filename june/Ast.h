@@ -23,7 +23,9 @@ namespace llvm {
 
 namespace june {
 
+	struct FileUnit;
 	struct FuncDecl;
+	struct GenericFuncDecl;
 	struct VarDecl;
 	struct VarDeclList;
 	struct RecordDecl;
@@ -36,8 +38,21 @@ namespace june {
 
 	using ScopeStmts   = llvm::SmallVector<AstNode*, 8>;
 	using FuncsList    = llvm::SmallVector<FuncDecl*, 4>;
-	using TypeBindList = llvm::SmallVector<std::tuple<Identifier, Type*>>;
+	struct TypeBindList {
+		// Infomation about where it was originally binded from.
+		SourceLoc OriginalBindingLoc;
+		FileUnit* OriginalFileFU;
 
+		// If when checking a generic function the function may
+		// have called from another generic function. This information
+		// specifies the generic function that called it and the binding
+		// Id attached at the time of the call.
+		u32              RecursiveCallBindingId   = 0xFFFF'FFFFF;
+		GenericFuncDecl* RecursiveCallGenericFunc = nullptr;
+
+		llvm::SmallVector<std::tuple<Identifier, Type*>> List;
+	};
+	
 	enum class AstKind {
 
 		ERROR,
@@ -57,6 +72,7 @@ namespace june {
 		IF,
 		BREAK,
 		CONTINUE,
+		DELETE,
 
 		IDENT_REF,
 		FUNC_CALL,
@@ -353,6 +369,15 @@ namespace june {
 
 	};
 
+	struct DeleteStmt : AstNode {
+		
+		Expr* Val;
+
+		DeleteStmt()
+			: AstNode(AstKind::DELETE) {}
+
+	};
+
 	struct Expr : AstNode {
 
 		// Typically set during type checking.
@@ -609,7 +634,8 @@ namespace june {
 	// Ex.  'new i32'
 	struct HeapAllocType : Expr {
 		
-		Type* TypeToAlloc;
+		Type*     TypeToAlloc;
+		FuncCall* ConstructorCall = nullptr;
 
 		HeapAllocType()
 			: Expr(AstKind::HEAP_ALLOC_TYPE) {}

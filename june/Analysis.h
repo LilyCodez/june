@@ -82,9 +82,10 @@ namespace june {
 		void CheckIteratorLoop(IteratorLoopStmt* Loop);
 		void CheckPredicateLoop(PredicateLoopStmt* Loop);
 		bool CheckIf(IfStmt* If);
-		void CheckCond(Expr* Cond, const SourceLoc& ExpandedCondLoc, const c8* PreText);
-
+		void CheckCond(Expr* Cond, SourceLoc ExpandedCondLoc, const c8* PreText);
 		void CheckLoopControl(LoopControlStmt* LoopControl);
+		void CheckDelete(DeleteStmt* Delete);
+
 		void CheckIdentRef(IdentRef* IRef, bool GivePrefToFuncs);
 		void CheckIdentRefCommon(IdentRef* IRef, bool GivePrefToFuncs, FileUnit* FUToLookup, RecordDecl* RecordToLookup);
 		void CheckFieldAccessor(FieldAccessor* FA, bool GivePrefToFuncs);
@@ -131,15 +132,55 @@ namespace june {
 	
 		void AssignTo(Expr* Assignment, Type* ToTy, SourceLoc AssignLoc);
 
+		void AddMarkErrorMsgAboutBindLoc() {
+			if (CFunc->is(AstKind::GENERIC_FUNC_DECL)) {
+				GenericFuncDecl* GenFunc = ocast< GenericFuncDecl*>(CFunc);
+				
+				TypeBindList& Bindings = std::get<0>(GenFunc->BindingCache[GenFunc->CurBindingId]);
+				FileUnit* OriginalFU      = Bindings.OriginalFileFU;
+				SourceLoc OriginalBindLoc = Bindings.OriginalBindingLoc;
+
+				while (Bindings.RecursiveCallGenericFunc) {
+
+					GenFunc  = Bindings.RecursiveCallGenericFunc;
+					Bindings = std::get<0>(GenFunc->BindingCache[Bindings.RecursiveCallBindingId]);
+
+					OriginalFU      = Bindings.OriginalFileFU;
+					OriginalBindLoc = Bindings.OriginalBindingLoc;
+
+				}
+
+				Log.AddMarkErrorMsg(OriginalFU->FL.ErrorPathKey, OriginalBindLoc,
+					"Type(s) originally bound here");
+				
+			}
+		}
+
+		void Error(SourceLoc Loc, const c8* Msg) {
+			Log.BeginError(Loc, Msg);
+			AddMarkErrorMsgAboutBindLoc();
+			Log.EndError();
+		}
+
+		template<typename... Targs>
+		void Error(SourceLoc Loc, const c8* Fmt, Targs&&... Args) {
+			Log.BeginError(Loc, Fmt, std::forward<Targs>(Args)...);
+			AddMarkErrorMsgAboutBindLoc();
+			Log.EndError();
+		}
+
 		void Error(AstNode* N, const c8* Msg) {
-			Log.Error(N->Loc, Msg);
+			Log.BeginError(N->Loc, Msg);
+			AddMarkErrorMsgAboutBindLoc();
+			Log.EndError();
 		}
 
 		template<typename... Targs>
 		void Error(AstNode* N, const c8* Fmt, Targs&&... Args) {
-			Log.Error(N->Loc, Fmt, std::forward<Targs>(Args)...);
+			Log.BeginError(N->Loc, Fmt, std::forward<Targs>(Args)...);
+			AddMarkErrorMsgAboutBindLoc();
+			Log.EndError();
 		}
-
 	};
 }
 

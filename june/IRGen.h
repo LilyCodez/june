@@ -91,6 +91,7 @@ namespace june {
 		void GenLoopCondJump(llvm::BasicBlock* LLCondBB, llvm::BasicBlock* LLBodyBB, llvm::BasicBlock* LLEndBB, Expr* Cond);
 		llvm::Value* GenIf(IfStmt* If);
 		llvm::Value* GenLoopControl(LoopControlStmt* LoopControl);
+		llvm::Value* GenDelete(DeleteStmt* Delete);
 		llvm::Value* GenIdentRef(IdentRef* IRef);
 		llvm::Value* GenFieldAccessor(FieldAccessor* FA);
 		llvm::Value* GenFuncCall(llvm::Value* LLAddr, FuncCall* Call);

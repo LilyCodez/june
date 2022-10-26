@@ -196,6 +196,11 @@ namespace june {
 		}
 	}
 
+	void PrintDelete(const JuneContext& Context, const DeleteStmt* Delete, u32 Depth) {
+		llvm::outs() << "(delete)\n";
+		PrintNode(Context, Delete->Val, Depth + 1);
+	}
+
 	void PrintIdentRef(const JuneContext& Context, const IdentRef* IRef, u32 Depth) {
 		llvm::outs() << "(iref| ident=\"" << IRef->Ident << "\")";
 	}
@@ -401,6 +406,9 @@ namespace june {
 		case AstKind::BREAK:
 		case AstKind::CONTINUE:
 			PrintLoopControl(Context, ocast<const LoopControlStmt*>(N), Depth);
+			break;
+		case AstKind::DELETE:
+			PrintDelete(Context, ocast<const DeleteStmt*>(N), Depth);
 			break;
 		case AstKind::IDENT_REF:
 			PrintIdentRef(Context, ocast<const IdentRef*>(N), Depth);

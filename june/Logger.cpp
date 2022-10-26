@@ -24,45 +24,26 @@ june::Logger::Logger(const SourceBuf& buf, llvm::raw_ostream& os, const std::str
 	: Buf(buf), OS(os), FilePath(filePath) {
 }
 
-void june::Logger::ErrorInternal(SourceLoc Loc, SourceLoc MarkLoc, const c8* MarkMessage, const std::function<void()>& Printer) {
+void june::Logger::AddMarkErrorMsg(SourceLoc Loc, const std::string& Msg) {
+	MarkMsgs.push_back(MarkMsg{ FilePath, Loc, Msg });
+}
 
-	// Forward error message
+void june::Logger::AddMarkErrorMsg(const std::string& FilePath, SourceLoc Loc, const std::string& Msg) {
+	MarkMsgs.push_back(MarkMsg{ FilePath, Loc, Msg });
+}
 
-	u32 LineNumber = Loc.LineNumber;
-	u32 ColumnNumber = 0;
-	const c8* MemPtr = Loc.Text.begin();
-	while (*MemPtr != '\n' && MemPtr != Buf.Memory) {
-		--MemPtr;
-		++ColumnNumber;
-	}
-	if (ColumnNumber > 0)
-		--ColumnNumber;
-
-	std::string Between   = ReplaceTabsWithSpaces(Loc.Text);
-	std::string Backwards = ReplaceTabsWithSpaces(RangeFromWindow(Loc.Text.begin(), -40));
-	std::string Forwards  = ReplaceTabsWithSpaces(RangeFromWindow(Loc.Text.begin() + Loc.Text.size() - 1, +40));
-
-	if (Between == "\n") {
-		Between = "";
-	}
-
-	bool BetweenTooBig = false;
-	if (Between.size() > 100) {
-		Between = Between.substr(0, 100);
-		if (Between[Between.size() - 1] == '\n' || Between[Between.size() - 1] == '\r') {
-			Between = Between.substr(Between.size() - 1);
-		} else if (Between[Between.size() - 2] == '\r') {
-			Between = Between.substr(Between.size() - 2);
+void june::Logger::EndError() {
+	for (MarkMsg& Msg : MarkMsgs) {
+		if (Msg.Loc.LineNumber > LargestLineNum) {
+			LargestLineNum = Msg.Loc.LineNumber;
 		}
-		BetweenTooBig = true;
 	}
 
-	assert(Backwards.find('\n', 0) == std::string::npos && "New Line in display!");
-	assert(Forwards.find('\n', 0) == std::string::npos && "New Line in display!");
+	std::string Between = ReplaceTabsWithSpaces(PrimaryErrLoc.Text);
 
 	std::string BetweenLine;
-	std::vector<std::string> BetweenLines;
 	const c8* BPtr = Between.c_str();
+	std::vector<std::string> BetweenLines;
 	while (*BPtr) {
 		if (*BPtr == '\n') {
 			BetweenLines.push_back(BetweenLine);
@@ -81,6 +62,71 @@ void june::Logger::ErrorInternal(SourceLoc Loc, SourceLoc MarkLoc, const c8* Mar
 	if (!BetweenLine.empty())
 		BetweenLines.push_back(BetweenLine);
 
+	if (Between == "\n") {
+		Between = "";
+	}
+
+	bool BetweenTooBig = false;
+	if (Between.size() > 100) {
+		Between = Between.substr(0, 100);
+		if (Between[Between.size() - 1] == '\n' || Between[Between.size() - 1] == '\r') {
+			Between = Between.substr(Between.size() - 1);
+		} else if (Between[Between.size() - 2] == '\r') {
+			Between = Between.substr(Between.size() - 2);
+		}
+		BetweenTooBig = true;
+	}
+
+	u32 LargestPrimaryLine = PrimaryErrLoc.LineNumber + BetweenLines.size() - 1;
+	if (LargestPrimaryLine > LargestLineNum) {
+		LargestLineNum = LargestPrimaryLine;
+	}
+	LNPad = std::string(std::to_string(LargestLineNum).size(), ' ');
+
+	std::string CurrentFilePath = FilePath;
+	for (MarkMsg& Msg : MarkMsgs) {
+		if (Msg.FilePath != CurrentFilePath) {
+			OS << '\n' << std::string(LNPad.size()+2, '-') << ">> " << Msg.FilePath;
+			CurrentFilePath = Msg.FilePath;
+		}
+		DisplayMarkError(Msg);
+	}
+
+	if (FilePath != CurrentFilePath) {
+		OS << '\n' << std::string(LNPad.size()+2, '-') << ">> " << FilePath;
+	}
+	DisplayPrimaryError(BetweenLines, BetweenTooBig);
+
+	OS << "\n";
+
+	MarkMsgs.clear();
+	LargestLineNum = 0;
+
+	HasError = true;
+
+	++TOTAL_ACC_ERRORS;
+	++NumErrors;
+	if (TOTAL_ACC_ERRORS == TOTAL_ALLOWED_ERRORS) {
+		SetTerminalColor(TerminalColorLightBlue);
+		OS << ">>";
+		SetTerminalColor(TerminalColorDefault);
+		OS << " Exceeded the maximum allowed error messages. Exiting.\n";
+		exit(1);
+	}
+}
+
+void june::Logger::InternalErrorHeader(SourceLoc Loc, const std::function<void()>& Printer) {
+	u32 LineNumber = Loc.LineNumber;
+	u32 ColumnNumber = 0;
+
+	const c8* MemPtr = Loc.Text.begin();
+	while (*MemPtr != '\n' && MemPtr != Buf.Memory) {
+		--MemPtr;
+		++ColumnNumber;
+	}
+	if (ColumnNumber > 0)
+		--ColumnNumber;
+
 	OS << FilePath.c_str();
 	OS << ":" << LineNumber << ":" << ColumnNumber << ":";
 	SetTerminalColor(TerminalColorRed);
@@ -90,38 +136,50 @@ void june::Logger::ErrorInternal(SourceLoc Loc, SourceLoc MarkLoc, const c8* Mar
 	// Printing the message
 	Printer();
 	OS << '.';
+}
 
-	u32 LargestLineNum = LineNumber + BetweenLines.size() - 1;
-	LNPad = std::string(std::to_string(LargestLineNum).size(), ' ');
+void june::Logger::DisplayMarkError(MarkMsg& Msg) {
 
-	// Displaying where the error occured
 	OS << "\n";
 	OS << LNPad << "  |\n";
 
-	if (MarkMessage) {
+	OS << ' ' << Msg.Loc.LineNumber;
+	OS << std::string(std::to_string(LargestLineNum).size() - std::to_string(Msg.Loc.LineNumber).size(), ' ');
+	OS << " | ";
 
-		OS << ' ' << MarkLoc.LineNumber;
-		OS << std::string(std::to_string(LargestLineNum).size() - std::to_string(LineNumber + MarkLoc.LineNumber).size(), ' ');
-		OS << " | ";
+	std::string MarkBetween   = ReplaceTabsWithSpaces(Msg.Loc.Text);
+	std::string MarkBackwards = ReplaceTabsWithSpaces(RangeFromWindow(Msg.Loc.Text.begin(), -40));
+	std::string MarkForwards  = ReplaceTabsWithSpaces(RangeFromWindow(Msg.Loc.Text.begin() + Msg.Loc.Text.size() - 1, +40));
 
-		std::string MarkBetween   = ReplaceTabsWithSpaces(MarkLoc.Text);
-		std::string MarkBackwards = ReplaceTabsWithSpaces(RangeFromWindow(MarkLoc.Text.begin(), -40));
-		std::string MarkForwards  = ReplaceTabsWithSpaces(RangeFromWindow(MarkLoc.Text.begin() + MarkLoc.Text.size() - 1, +40));
+	OS << MarkBackwards << MarkBetween << MarkForwards << '\n';
 
-		OS << MarkBackwards << MarkBetween << MarkForwards << '\n';
-
-		OS << LNPad << "  | ";
-		SetTerminalColor(TerminalColorCyan);
+	OS << LNPad << "  | ";
+	SetTerminalColor(TerminalColorCyan);
 		
-		OS << std::string(MarkBackwards.size(), ' ');
-		OS << std::string(MarkBetween.size(), '-');
-		OS << " ";
-		OS << MarkMessage << '\n';
-		SetTerminalColor(TerminalColorDefault);
-		OS << LNPad << "  |\n";
-	}
+	OS << std::string(MarkBackwards.size(), ' ');
+	OS << std::string(MarkBetween.size(), '-');
+	OS << " ";
+	OS << Msg.Message << '\n';
+	SetTerminalColor(TerminalColorDefault);
+	OS << LNPad << "  |";
+}
 
-	std::string spaces = std::string(Backwards.size(), ' ');
+void june::Logger::DisplayPrimaryError(const std::vector<std::string>& BetweenLines, bool BetweenTooBig) {
+
+	SourceLoc Loc = PrimaryErrLoc;
+
+	u32 LineNumber = Loc.LineNumber;
+
+	std::string Backwards = ReplaceTabsWithSpaces(RangeFromWindow(Loc.Text.begin(), -40));
+	std::string Forwards  = ReplaceTabsWithSpaces(RangeFromWindow(Loc.Text.begin() + Loc.Text.size() - 1, +40));
+
+	assert(Backwards.find('\n', 0) == std::string::npos && "New Line in display!");
+	assert(Forwards.find('\n', 0) == std::string::npos && "New Line in display!");
+
+	OS << "\n";
+	OS << LNPad << "  |\n";
+
+	std::string Spaces = std::string(Backwards.size(), ' ');
 
 	u32 LargestRedUnderscore = 0;
 	for (const std::string& BetweenLine : BetweenLines) {
@@ -186,7 +244,7 @@ void june::Logger::ErrorInternal(SourceLoc Loc, SourceLoc MarkLoc, const c8* Mar
 		OS << LNPad << "  | ";
 		SetTerminalColor(TerminalColorRed);
 		if (i == 0) {
-			OS << spaces;
+			OS << Spaces;
 		}
 		OS << std::string(BetweenLine.size() - NonTrailingWhitespaceStr.size(), ' ')
 		   << std::string(NonTrailingWhitespaceStr.size(), '~');
@@ -215,20 +273,6 @@ void june::Logger::ErrorInternal(SourceLoc Loc, SourceLoc MarkLoc, const c8* Mar
 		OS << '\n';
 		SetTerminalColor(TerminalColorDefault);
 		
-	}
-
-	OS << '\n';
-
-	HasError = true;
-
-	++TOTAL_ACC_ERRORS;
-	++NumErrors;
-	if (TOTAL_ACC_ERRORS == TOTAL_ALLOWED_ERRORS) {
-		SetTerminalColor(TerminalColorLightBlue);
-		OS << ">>";
-		SetTerminalColor(TerminalColorDefault);
-		OS << " Exceeded the maximum allowed error messages. Exiting.\n";
-		exit(1);
 	}
 }
 

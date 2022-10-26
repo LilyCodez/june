@@ -262,6 +262,7 @@ june::AstNode* june::Parser::ParseStmt() {
 	case TokenKind::KW_IF:     Stmt = ParseIf();                 break;
 	case TokenKind::KW_CONTINUE:
 	case TokenKind::KW_BREAK:  Stmt = ParseLoopControl(); Match(';'); break;
+	case TokenKind::KW_DELETE: Stmt = ParseDelete(); Match(';'); break;
 	case TokenKind::KW_NATIVE:
 	case TokenKind::KW_COMPTIME: {
 		mods::Mod Mods = ParseModifiers();
@@ -923,6 +924,13 @@ june::LoopControlStmt* june::Parser::ParseLoopControl() {
 	return LoopControl;
 }
 
+june::DeleteStmt* june::Parser::ParseDelete() {
+	NextToken(); // Consuming 'delete' token
+	DeleteStmt* Delete = NewNode<DeleteStmt>(CTok);
+	Delete->Val = ParseExpr();
+	return Delete;
+}
+
 //===-------------------------------===//
 // Expressions
 //===-------------------------------===//
@@ -1193,6 +1201,11 @@ june::Expr* june::Parser::ParsePrimaryExpr() {
 		HeapAllocType* HeapAlloc = NewNode<HeapAllocType>(CTok);
 		NextToken(); // Consuming 'new' token
 		HeapAlloc->TypeToAlloc = ParseType(false);
+		if (HeapAlloc->TypeToAlloc->isNot(Context.ErrorType)) {
+			if (CTok.is('(')) {
+				return ParseFuncCall(HeapAlloc);
+			}
+		}
 		return HeapAlloc;
 	}
 	case TokenKind::KW_THIS: {
