@@ -626,6 +626,11 @@ namespace june {
 		Type* ToTy;
 		Expr* Val;
 
+		enum {
+			STANDARD,
+			BITS,
+		} CastKind = TypeCast::STANDARD;
+
 		TypeCast()
 			: Expr(AstKind::TYPE_CAST) {}
 

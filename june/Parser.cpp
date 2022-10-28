@@ -1193,6 +1193,23 @@ june::Expr* june::Parser::ParsePrimaryExpr() {
 		if (Cast->ToTy->is(Context.ErrorType)) {
 			return Cast;
 		}
+		if (CTok.is(',')) {
+			NextToken(); // Consuming ',' token
+			Token ExtendedCastInfoTok = CTok;
+			june::Identifier ExtendedCastInfo =
+				ParseIdentifier("Expected extended casting information");
+			if (ExtendedCastInfo.isNull()) {
+				SkipRecovery(false);
+				return Cast;
+			}
+			
+			if (ExtendedCastInfo == june::Identifier("bits")) {
+				Cast->CastKind = TypeCast::BITS;
+			} else {
+				Error(ExtendedCastInfoTok, "Invalid extended casting info");
+			}
+		}
+
 		Match(')');
 		Cast->Val = ParsePrimaryAndPostExpr();
 		return Cast;

@@ -135,7 +135,7 @@ from(i: i32) -> String {
 		iCount /= 10;
 		++res.length;
 	}
-	
+
 	res.buffer = new c8[res.length + 1];
 	scan: i32 = res.length - 1;
 	loop i < 0 {
@@ -144,11 +144,93 @@ from(i: i32) -> String {
 	}
 	
 	if isNeg {
-		res.buffer[scan] = '-';
+		res.buffer[0] = '-';
 	}
 	
 	res.buffer[res.length] = '\0';
 	return res;
+}
+
+comptime F32_MANTISSA_BITS := 23;
+comptime F32_EXPONENT_BITS := 8;
+comptime F32_EXPONENT_BIAS := 127;
+
+// See: https://www.researchgate.net/publication/329410883_Ryu_fast_float-to-string_conversion
+//      https://github.com/ulfjack/ryu/blob/master/ryu/f2s.c
+from(f: f32) -> String {
+	
+	// Step 1.
+	// Extract the sign/mantissa/exponent from the bit
+	// representation of the float.
+
+	fBits: u32 = cast(u32, bits) f;
+	
+	// 1 bit      | 8 bits        | 23 bits
+	// signed bit | exponent bits | mantissa bits
+
+	sign:     bool = (fBits & 0x80000000u) != 0;
+	mantissa: u32  = fBits & 0x007FFFFFu;
+	exponent: u32  = fBits & 0x7F800000u;
+	exponent >>= F32_MANTISSA_BITS; // Move the bits down
+
+	// Check for special cases of NaN and Infinity  (exponenet is all 1s)
+	if exponent == 0b11111111 {
+		if mantissa == 0 {
+			return sign ? String("-Inf") |> String("+Inf");
+		} else {
+			return String("NaN");
+		}
+	}
+	
+	// Check for zero cases
+	if exponent == 0 && mantissa == 0 {
+		return sign ? String("-0.0") |> String("0.0");
+	}
+
+	// conversion to form such that: f = (-1)^sign * mf * 2^(ef)
+
+	e2: i32;
+	mf: u32;
+
+	if exponent == 0 {
+		// subnormal case in which f was some: 0.mantissa
+		e2 = 1 - F32_EXPONENT_BIAS - F32_MANTISSA_BITS - 2;
+		mf = mantissa;
+	} else {
+		// normalized case: 1.mantissa
+		e2 = (cast(i32) exponent) - F32_EXPONENT_BIAS - F32_MANTISSA_BITS - 2;
+		mf = (1u << F32_MANTISSA_BITS) | mantissa; // 2^len(mantissa) + m
+	}
+
+	// Step 2.
+	// Calculating the internval for valid decimal representations.
+	
+	uShift: u32 = cast(u32) (mantissa != 0 || exponent <= 1);
+	u: u32 = 4 * mf - 1 - uShift;
+	v: u32 = 4 * mf;
+	w: u32 = 4 * mf + 2;
+
+	// Step 3.
+	// Converting to a decimal power base
+	e10: i32;
+	u10, v10, w10: (u32, u32, u32);
+	if e2 >= 0 {
+		q: u32 = ((cast(u32) e2) * 78913) >> 18; // floor(log10(2^e))
+		e10 = q;
+		
+		
+	} else { // e2 < 0
+		q: u32 = ((cast(u32) -e2) * 732923) >> 20; // floor(log10(5^-e))
+		e10 = q;
+		
+	}
+
+
+	return String("");
+}
+
+from(b: bool) -> String {
+	return b ? String("true") |> String("false");
 }
 
 concat(a: String*, b: String*) -> String {

@@ -50,6 +50,14 @@ print(i: i32) {
 	print(&String.from(i));
 }
 
+print(f: f32) {
+	print(&String.from(f));
+}
+
+print(b: bool) {
+	print(&String.from(b));
+}
+
 println() {
 	ln :c8 = '\n';
 	print(&ln, 1);

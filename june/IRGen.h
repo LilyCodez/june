@@ -38,6 +38,17 @@ namespace june {
 		llvm::IRBuilder<>  Builder;
 		bool               EmitDebugInfo;
 		bool               DisplayLLVMIR;
+		
+		// Objects which have destructors and need to be destroyed
+		// and are allowed before any returns or branching is
+		// encountered.
+		//
+		// These objects can always be gaurenteed to be destroyed so
+		// any object in this list has its destructor no matter where
+		// a return occured.
+		llvm::SmallVector<std::tuple<Type*, llvm::Value*>> AlwaysInitializedDestroyedObjects;
+		llvm::DenseMap<llvm::Value*, Type*>                CurrentlyInitializedDestroyedObjects;
+		bool EncounteredReturn = false;
 
 		struct Scope {
 			
@@ -105,6 +116,8 @@ namespace june {
 		llvm::Value* GenTypeCast(TypeCast* Cast);
 		llvm::Value* GenHeapAllocType(HeapAllocType* HeapAlloc);
 		llvm::Value* GenTernaryCond(TernaryCond* Ternary);
+		void GenTernaryCondAssignment(TernaryCond* Ternary, llvm::Value* LLAddr);
+		void GenTernaryCondForRetRef(TernaryCond* Ternary);
 		llvm::Value* GenTuple(Tuple* Tup, llvm::Value* LLAddr);
 
 		llvm::Value* GenAssignment(llvm::Value* LLAddr, Expr* Val);
@@ -196,8 +209,9 @@ namespace june {
 
 		void AddObjectToDestroy(Type* TypeBeingDestroyed, llvm::Value* LLObjectAddr);
 
-		void CallDestructors(Scope* LocScope, llvm::Value* LLReturingObjectAddr = nullptr);
-		void CallDestructorsForRet(llvm::Value* LLReturingObjectAddr = nullptr);
+		void CallDestructors(Scope* LocScope);
+		void DestroyAlwaysInitializedObjects(llvm::Value* LLReturningObj);
+		void DestroyCurrentlyInitializedObjects(llvm::Value* LLReturningObj);
 		void CallDestructors(Type* TypeBeingDestroyed, llvm::Value* LLAddr);
 		void GenDefaultDestructor(RecordDecl* Record, llvm::Value* LLAddr);
 
@@ -207,6 +221,8 @@ namespace june {
 			                     const std::function<void(llvm::PHINode*, Type*)>& CodeGenCallback);
 
 		void MoveObjectIfNeeded(llvm::Value* LLAddr, Expr* Assignment);
+		
+		void RemoveCurrentlyInitializedDestroyedObjectsFromCurScope();
 
 	};
 }

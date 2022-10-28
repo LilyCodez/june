@@ -2043,10 +2043,18 @@ void june::Analysis::CheckTypeCast(TypeCast* Cast) {
 	CheckNode(Cast->Val);
 	YIELD_ERROR_WHEN_M(Cast, Cast->Val);
 
-	if (!IsCastableTo(Cast->ToTy, Cast->Val->Ty)) {
-		Error(Cast, "Cannot cast from type '%s' to type '%s'",
-			Cast->Val->Ty->ToStr(), Cast->ToTy->ToStr());
-		YIELD_ERROR(Cast);
+	if (Cast->CastKind == TypeCast::STANDARD) {
+		if (!IsCastableTo(Cast->ToTy, Cast->Val->Ty)) {
+			Error(Cast, "Cannot cast from type '%s' to type '%s'",
+				Cast->Val->Ty->ToStr(), Cast->ToTy->ToStr());
+			YIELD_ERROR(Cast);
+		}
+	} else if (Cast->CastKind == TypeCast::BITS) {
+		if (!IsBitsCastableTo(Cast->ToTy, Cast->Val->Ty)) {
+			Error(Cast, "Cannot bits cast from type '%s' to type '%s'",
+				Cast->Val->Ty->ToStr(), Cast->ToTy->ToStr());
+			YIELD_ERROR(Cast);
+		}
 	}
 
 	// TODO: What if the casting requires non-foldability?
@@ -2063,9 +2071,12 @@ void june::Analysis::CheckHeapAllocType(HeapAllocType* HeapAlloc) {
 		HeapAlloc->Ty = PointerType::Create(
 			HeapAlloc->TypeToAlloc->AsFixedArrayType()->GetBaseType(), Context);
 		FixedArrayType* ArrTyItr = HeapAlloc->TypeToAlloc->AsFixedArrayType();
-		// TODO: Make sure the expressions are integers
 		while (true) {
 			CheckNode(ArrTyItr->LengthAsExpr);
+			if (!ArrTyItr->LengthAsExpr->Ty->isInt()) {
+				Error(HeapAlloc, "Array length expected to be an integer");
+			}
+
 			if (ArrTyItr->ElmTy->GetKind() == TypeKind::FIXED_ARRAY) {
 				ArrTyItr = ArrTyItr->ElmTy->AsFixedArrayType();
 			} else {
@@ -2299,9 +2310,12 @@ bool june::Analysis::IsCastableTo(Type* ToTy, Type* FromTy) {
 	case TypeKind::C8:
 	case TypeKind::C16:
 	case TypeKind::C32:
-		if (FromTy->isNumber() || FromTy->GetKind() == TypeKind::POINTER)
-			return true; // Allow pointers/numbers to cast to numbers
+		if (FromTy->isNumber() || FromTy->GetKind() == TypeKind::POINTER || FromTy->is(Context.BoolType))
+			return true; // Allow pointers/numbers to cast to integers
 		return false;
+	case TypeKind::F32:
+	case TypeKind::F64:
+		return FromTy->isNumber();
 	case TypeKind::POINTER:
 		if (FromTy->isNumber() || FromTy->GetKind() == TypeKind::POINTER)
 			return true; // Allow pointers/numbers to cast to pointers
@@ -2309,6 +2323,13 @@ bool june::Analysis::IsCastableTo(Type* ToTy, Type* FromTy) {
 	default:
 		return IsAssignableTo(ToTy, FromTy, nullptr, false);
 	}
+}
+
+bool june::Analysis::IsBitsCastableTo(Type* ToTy, Type* FromTy) {
+	if (ToTy->isNumber()) {
+		return FromTy->isNumber() || FromTy->GetKind() == TypeKind::POINTER;
+	}
+	return false;
 }
 
 void june::Analysis::CreateCast(Expr* E, Type* ToType) {

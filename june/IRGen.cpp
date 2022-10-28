@@ -526,7 +526,7 @@ void june::IRGen::GenFuncBody(FuncDecl* Func) {
 
 	llvm::Instruction* LLRet = nullptr;
 	if (Func->NumReturns > 1) {
-		CallDestructorsForRet();
+		DestroyAlwaysInitializedObjects(nullptr);
 		if (HasVoidRetTy) {
 			LLRet = Builder.CreateRetVoid();
 		} else {
@@ -541,7 +541,7 @@ void june::IRGen::GenFuncBody(FuncDecl* Func) {
 			LLRet = Builder.CreateRet(CreateLoad(LLRetAddr));
 		}
 	} else if (Func->NumReturns == 0) {
-		CallDestructorsForRet();
+		DestroyAlwaysInitializedObjects(nullptr);
 		if (HasVoidRetTy) {
 			LLRet = Builder.CreateRetVoid();
 		} else if (Func->IsMainFunc &&
@@ -674,6 +674,7 @@ llvm::Value* june::IRGen::GenAlloca(VarDecl* Var) {
 		// TODO: Hand over to mangler
 		LLAlloca->setName(Var->Name.Text);
 	}
+
 	return LLAlloca;
 }
 
@@ -1012,18 +1013,30 @@ llvm::Value* june::IRGen::GenReturn(ReturnStmt* Ret) {
 
 	if (CFunc->NumReturns == 1) {
 		if (Ret->Val && !ReturnViaRef) {
-			CallDestructorsForRet();
-			Builder.CreateRet(GenRValue(Ret->Val));
+			llvm::Value* LLRetVal = GenRValue(Ret->Val);
+			DestroyCurrentlyInitializedObjects(nullptr);
+			DestroyAlwaysInitializedObjects(nullptr);
+			Builder.CreateRet(LLRetVal);
 		} else if (CFunc->IsMainFunc) {
-			CallDestructorsForRet();
+			DestroyCurrentlyInitializedObjects(nullptr);
+			DestroyAlwaysInitializedObjects(nullptr);
 			Builder.CreateRet(GetLLInt32(0, LLContext));
 		} else if (ReturnViaRef) {
-			llvm::Value* LLStructToBeAssigned = GenNode(Ret->Val);
-			CallDestructorsForRet(LLStructToBeAssigned);
-			GenStoreRetStructRes(Ret->Val, LLStructToBeAssigned);
+			if (Ret->Val->is(AstKind::TERNARY_COND)) {
+				GenTernaryCondForRetRef(ocast<TernaryCond*>(Ret->Val));
+				DestroyCurrentlyInitializedObjects(nullptr);
+				DestroyAlwaysInitializedObjects(nullptr);
+			} else {
+				llvm::Value* LLStructToBeAssigned = GenNode(Ret->Val);
+				GenStoreRetStructRes(Ret->Val, LLStructToBeAssigned);
+				// Don't destroy the returning object
+				DestroyCurrentlyInitializedObjects(LLStructToBeAssigned);
+				DestroyAlwaysInitializedObjects(LLStructToBeAssigned);
+			}
 			Builder.CreateRetVoid();
 		} else {
-			CallDestructorsForRet();
+			DestroyCurrentlyInitializedObjects(nullptr);
+			DestroyAlwaysInitializedObjects(nullptr);
 			Builder.CreateRetVoid();
 		}
 		EmitDebugLocation(Ret);
@@ -1034,16 +1047,26 @@ llvm::Value* june::IRGen::GenReturn(ReturnStmt* Ret) {
 		llvm::Value* LLMoveAddr = GenNode(Ret->Val);
 		Builder.CreateStore(GenRValue(Ret->Val, LLMoveAddr), LLRetAddr);
 		MoveObjectIfNeeded(LLMoveAddr, Ret->Val);
+		DestroyCurrentlyInitializedObjects(nullptr);
 	} else if (CFunc->IsMainFunc) {
 		Builder.CreateStore(GetLLInt32(0, LLContext), LLRetAddr);
+		DestroyCurrentlyInitializedObjects(nullptr);
 	} else if (ReturnViaRef) {
-		llvm::Value* LLMoveAddr = GenNode(Ret->Val);
-		GenStoreRetStructRes(Ret->Val, LLMoveAddr);
-		MoveObjectIfNeeded(LLMoveAddr, Ret->Val);
+		if (Ret->Val->is(AstKind::TERNARY_COND)) {
+			GenTernaryCondForRetRef(ocast<TernaryCond*>(Ret->Val));
+			DestroyCurrentlyInitializedObjects(nullptr);
+		} else {
+			llvm::Value* LLMoveAddr = GenNode(Ret->Val);
+			GenStoreRetStructRes(Ret->Val, LLMoveAddr);
+			MoveObjectIfNeeded(LLMoveAddr, Ret->Val);
+			DestroyCurrentlyInitializedObjects(LLMoveAddr);
+		}
 	}
-	EmitDebugLocation(Ret); // storage
+	// TODO: This can sometimes lead to null instruction and error out EmitDebugLocation(Ret); // storage
 	Builder.CreateBr(LLFuncEndBB);
 	EmitDebugLocation(Ret);
+
+	EncounteredReturn = true;
 	return nullptr;
 }
 
@@ -2124,7 +2147,14 @@ llvm::Value* june::IRGen::GenArrayAccess(ArrayAccess* AA) {
 }
 
 llvm::Value* june::IRGen::GenTypeCast(TypeCast* Cast) {
-	return GenCast(Cast->ToTy, Cast->Val->Ty, GenRValue(Cast->Val));
+	if (Cast->CastKind == TypeCast::STANDARD) {
+		return GenCast(Cast->ToTy, Cast->Val->Ty, GenRValue(Cast->Val));
+	} else if (Cast->CastKind == TypeCast::BITS) {
+		llvm::Type* LLCastType = GenType(Cast->ToTy);
+		return Builder.CreateBitCast(GenRValue(Cast->Val), LLCastType);
+	}
+	assert(!"Unreachable!");
+	return nullptr;
 }
 
 llvm::Value* june::IRGen::GenHeapAllocType(HeapAllocType* HeapAlloc) {
@@ -2157,6 +2187,100 @@ llvm::Value* june::IRGen::GenTernaryCond(TernaryCond* Ternary) {
 	llvm::Value* LLVal1 = GenRValue(Ternary->Val1);
 	llvm::Value* LLVal2 = GenRValue(Ternary->Val2);
 	return Builder.CreateSelect(LLCond, LLVal1, LLVal2);
+}
+
+void june::IRGen::GenTernaryCondAssignment(TernaryCond* Ternary, llvm::Value* LLAddr) {
+
+	llvm::BasicBlock* LLThenBB = llvm::BasicBlock::Create(LLContext, "tern.if.then", LLFunc);
+	llvm::BasicBlock* LLElseBB = llvm::BasicBlock::Create(LLContext, "tern.if.else", LLFunc);
+	llvm::BasicBlock* LLEndBB  = llvm::BasicBlock::Create(LLContext, "tern.if.end", LLFunc);
+	
+	GenBranchOnCond(Ternary->Cond, LLThenBB, LLElseBB);
+	EmitDebugLocation(Ternary);
+
+	// Still have to create a temporary scope since objects
+	// as part of the false condition that get created still
+	// have their memory allocated. This memory allocation also
+	// means object destruction but we want it to only destruct
+	// the memory within the temporary scope. If it was destructed
+	// on the outside scope then its possible for the compiler to
+	// try and destruct non-initialized memory.
+
+	// Then Block
+	{
+		PUSH_SCOPE();
+		Builder.SetInsertPoint(LLThenBB);
+		GenAssignment(LLAddr, Ternary->Val1);
+		CallDestructors(LocScope);
+		RemoveCurrentlyInitializedDestroyedObjectsFromCurScope();
+		POP_SCOPE();
+		Builder.CreateBr(LLEndBB);
+
+	}	
+	
+	// Else Block
+	{
+		PUSH_SCOPE();
+		Builder.SetInsertPoint(LLElseBB);
+		GenAssignment(LLAddr, Ternary->Val2);
+		CallDestructors(LocScope);
+		RemoveCurrentlyInitializedDestroyedObjectsFromCurScope();
+		POP_SCOPE();
+		Builder.CreateBr(LLEndBB);
+	}
+
+	// Continue
+	GenSetInsertBlock(LLEndBB, nullptr);
+	
+}
+
+void june::IRGen::GenTernaryCondForRetRef(TernaryCond* Ternary) {
+
+	llvm::BasicBlock* LLThenBB = llvm::BasicBlock::Create(LLContext, "tern.if.then", LLFunc);
+	llvm::BasicBlock* LLElseBB = llvm::BasicBlock::Create(LLContext, "tern.if.else", LLFunc);
+	llvm::BasicBlock* LLEndBB  = llvm::BasicBlock::Create(LLContext, "tern.if.end", LLFunc);
+	
+	GenBranchOnCond(Ternary->Cond, LLThenBB, LLElseBB);
+	EmitDebugLocation(Ternary);
+
+	// See examplanation in 'GenTernaryCondAssignment' for the scopes.
+
+	// Then Block
+	{
+		PUSH_SCOPE();
+		Builder.SetInsertPoint(LLThenBB);
+		if (Ternary->Val1->is(AstKind::TERNARY_COND)) {
+			GenTernaryCondForRetRef(ocast<TernaryCond*>(Ternary->Val1));
+		} else {
+			llvm::Value* LLValue = GenNode(Ternary->Val1);
+			GenStoreRetStructRes(Ternary->Val1, LLValue);
+			MoveObjectIfNeeded(LLValue, Ternary->Val1);
+		}
+		CallDestructors(LocScope);
+		RemoveCurrentlyInitializedDestroyedObjectsFromCurScope();
+		POP_SCOPE();
+		Builder.CreateBr(LLEndBB);
+	}
+
+	// Else Block
+	{
+		PUSH_SCOPE();
+		Builder.SetInsertPoint(LLElseBB);
+		if (Ternary->Val2->is(AstKind::TERNARY_COND)) {
+			GenTernaryCondForRetRef(ocast<TernaryCond*>(Ternary->Val2));
+		} else {
+			llvm::Value* LLValue = GenNode(Ternary->Val2);
+			GenStoreRetStructRes(Ternary->Val2, LLValue);
+			MoveObjectIfNeeded(LLValue, Ternary->Val2);
+		}
+		CallDestructors(LocScope);
+		RemoveCurrentlyInitializedDestroyedObjectsFromCurScope();
+		POP_SCOPE();
+		Builder.CreateBr(LLEndBB);
+	}
+
+	// Continue
+	GenSetInsertBlock(LLEndBB, nullptr);
 }
 
 llvm::Value* june::IRGen::GenTuple(Tuple* Tup, llvm::Value* LLAddr) {
@@ -2200,6 +2324,18 @@ llvm::Value* june::IRGen::GenAssignment(llvm::Value* LLAddr, Expr* Val) {
 		}
 	} else if (Val->Kind == AstKind::TUPLE) {
 		GenTuple(ocast<Tuple*>(Val), LLAddr);
+	} else if (Val->Kind == AstKind::TERNARY_COND) {
+		// If the ternary does not have a trivial type
+		// then it must use branching instead.
+		if (Val->Ty->GetKind() == TypeKind::RECORD ||
+			Val->Ty->GetKind() == TypeKind::TUPLE ||
+			Val->Ty->GetKind() == TypeKind::FIXED_ARRAY) {
+			GenTernaryCondAssignment(ocast<TernaryCond*>(Val), LLAddr);
+			return LLAddr;
+		} else {
+			LLMoveAddr = GenNode(Val);
+			LLRValToStore = GenRValue(Val, LLMoveAddr);
+		}
 	} else {
 		LLMoveAddr = GenNode(Val);
 		LLRValToStore = GenRValue(Val, LLMoveAddr);
@@ -2232,6 +2368,7 @@ void june::IRGen::GenBlock(llvm::BasicBlock* LLBB, LexScope& Scope) {
 			CallDestructors(LocScope);
 		}
 	}
+	RemoveCurrentlyInitializedDestroyedObjectsFromCurScope();
 	POP_SCOPE();
 }
 
@@ -2280,6 +2417,15 @@ llvm::Value* june::IRGen::GenCast(Type* ToType, Type* FromType, llvm::Value* LLV
 		} else if (FromType->GetKind() == TypeKind::POINTER) {
 			// Ptr to Int
 			return Builder.CreatePtrToInt(LLVal, LLCastType);
+		} else if (FromType->is(Context.BoolType)) {
+			// Bool to Int
+			if (ToType->isSigned()) {
+				// Signed upcasting
+				return Builder.CreateSExt(LLVal, LLCastType);
+			} else {
+				// Unsigned upcasting
+				return Builder.CreateZExt(LLVal, LLCastType);
+			}
 		}
 		goto missing_cast_case_lab;
 	case TypeKind::F32:
@@ -2769,7 +2915,6 @@ void june::IRGen::GenStoreRetStructRes(Expr* Assignment, llvm::Value* LLStructTo
 		LLRetStructAddr = LLFunc->getArg(0);
 	}
 
-	
 	llvm::StructType* LLStructTy = llvm::cast<llvm::StructType>(
 		LLStructToBeAssigned->getType()->getPointerElementType());
 
@@ -2785,24 +2930,42 @@ void june::IRGen::GenStoreRetStructRes(Expr* Assignment, llvm::Value* LLStructTo
 
 void june::IRGen::AddObjectToDestroy(Type* TypeBeingDestroyed, llvm::Value* LLObjectAddr) {
 	LocScope->ObjectsNeedingDestroyed.push_back(std::make_tuple(TypeBeingDestroyed, LLObjectAddr));
+	
+	if (!EncounteredReturn && !LocScope->Parent) {
+		AlwaysInitializedDestroyedObjects.push_back(std::make_tuple(TypeBeingDestroyed, LLObjectAddr));
+	} else {
+		CurrentlyInitializedDestroyedObjects.insert({ LLObjectAddr, TypeBeingDestroyed });
+	}
 }
 
-void june::IRGen::CallDestructors(Scope* LocScope, llvm::Value* LLReturingObjectAddr) {
+void june::IRGen::CallDestructors(Scope* LocScope) {
 	for (auto& ObjectNeedingDestroyed : LocScope->ObjectsNeedingDestroyed) {
 		Type* TypeBeingDestroyed = std::get<0>(ObjectNeedingDestroyed);
 		llvm::Value* LLAddr      = std::get<1>(ObjectNeedingDestroyed);
 
-		if (LLReturingObjectAddr != LLAddr) {
+		CallDestructors(TypeBeingDestroyed, LLAddr);
+	}
+}
+
+void june::IRGen::DestroyAlwaysInitializedObjects(llvm::Value* LLReturningObj) {
+	for (auto& ObjectNeedingDestroyed : AlwaysInitializedDestroyedObjects) {
+		Type* TypeBeingDestroyed = std::get<0>(ObjectNeedingDestroyed);
+		llvm::Value* LLAddr      = std::get<1>(ObjectNeedingDestroyed);
+
+		if (LLAddr != LLReturningObj) {
 			CallDestructors(TypeBeingDestroyed, LLAddr);
 		}
 	}
 }
 
-void june::IRGen::CallDestructorsForRet(llvm::Value* LLReturingObjectAddr) {
-	Scope* ScopeItr = LocScope;
-	while (ScopeItr) {
-		CallDestructors(ScopeItr, LLReturingObjectAddr);
-		ScopeItr = ScopeItr->Parent;
+void june::IRGen::DestroyCurrentlyInitializedObjects(llvm::Value* LLReturningObj) {
+	for (auto& ObjectNeedingDestroyed : CurrentlyInitializedDestroyedObjects) {
+		Type* TypeBeingDestroyed = ObjectNeedingDestroyed.second;
+		llvm::Value* LLAddr      = ObjectNeedingDestroyed.first;
+
+		if (LLAddr != LLReturningObj) {
+			CallDestructors(TypeBeingDestroyed, LLAddr);
+		}
 	}
 }
 
@@ -2925,5 +3088,11 @@ void june::IRGen::GenInteralArrayLoop(FixedArrayType* ArrTy,
 void june::IRGen::MoveObjectIfNeeded(llvm::Value* LLAddr, Expr* Assignment) {
 	if (TypeNeedsDestruction(Assignment->Ty)) {
 		GenDefaultValue(Assignment->Ty, LLAddr);
+	}
+}
+
+void june::IRGen::RemoveCurrentlyInitializedDestroyedObjectsFromCurScope() {
+	for (auto& DestroyedObject : LocScope->ObjectsNeedingDestroyed) {
+		CurrentlyInitializedDestroyedObjects.erase(std::get<1>(DestroyedObject));
 	}
 }

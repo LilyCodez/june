@@ -6,11 +6,10 @@
 #include "JuneContext.h"
 
 bool june::Type::is(Type* T) const {
-	if (Kind == TypeKind::GENERIC_TYPE) {
-		const Type* BoundTy = UnboxGeneric();
-		if (BoundTy && BoundTy != this) {
-			return BoundTy->is(T);
-		} // Else, comparison is during parsing so compare by pointer.
+	const Type* ThisUnboxed = UnboxGeneric();
+	Type* ThatUnboxed = T->UnboxGeneric();
+	if (ThisUnboxed != this || ThatUnboxed != T) {
+		return ThisUnboxed->is(ThatUnboxed);
 	}
 	return this == T;
 }
